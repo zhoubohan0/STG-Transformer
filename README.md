@@ -1,6 +1,6 @@
 # State-To-Go (STG) Transformer
 
-![](C:\Users\Lenovo\Desktop\STG-Transformer\src\main-workflow.jpg)
+![](./src/main-workflow.jpg)
 
 This is the official implementation of "Learning from Visual Observation via Offline Pretrained State-to-Go Transformer". A two-stage method, named **STG**, is proposed for reinforcement learning from visual observation.  
 
