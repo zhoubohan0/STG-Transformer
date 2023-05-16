@@ -1,52 +1,123 @@
 # STG for Atari
 
-This repository shows how to apply STG in Atari environments.
+This repository shows how to apply STG in Atari environments. All subsequent commands will be in the current directory (where the `README.md` is located).
 
 ## Requirements
 
+- python=3.7
+- atari_py=0.2.6
+- gym=0.19.0
+- numpy,torch,pandas,matplotlib,glob,tensorboardX,scikit-learn,gsutil
+
+Create a conda virtual environment named "STG" and complete installation.
+
 ```
+conda create -n STG python=3.7
+conda activate STG
 pip -r requirements.txt
 ```
 
 ## Data Preparation
 
-First and foremost, we collect a few expert observations to create expert datasets. 
+There are two ways to form an expert dataset for STG/ELE offline pretraining in the first pretraining stage. You can download the Google [Dopamine](https://github.com/google/dopamine) Dataset using gsutil and to access to the Atari datasets just like d4rl with  [d4rl-atari](https://github.com/takuseno/d4rl-atari). 
 
+1. Install [d4rl-atari](https://github.com/takuseno/d4rl-atari).
 
+   ```
+   pip install git+https://github.com/takuseno/d4rl-atari
+   ```
 
-## Instructions
+2. Choose a environment and create its directory for storage.
 
-- sac_atari.py 用SAC默认训练5000000步获得专家策略，模型和训练结果保存至checkpoints/SAC_BreakoutNoFrameskip-v4_seed0(举例)，包括events.out.tfevents.\*和SAC_epi\*_rtn\*.pth和train.csv
-``` 
-python sac_atari.py --env_id BreakoutNoFrameskip-v4 --clipframe 1 --total_timesteps 5000000 --mode train --seed 0  # 训练示例
-python sac_atari.py --env_id BreakoutNoFrameskip-v4 --clipframe 1 --mode test --buffer_size 10000 # 在线交互采集专家轨迹，注意修改ckpts和save_dir
+   ```
+   mkdir -p ./dataset/$env$
+   ```
+
+   `$env$` can be referred to [Atari Environment List](https://www.gymlibrary.dev/environments/atari/complete_list/), like Breakout.
+
+3.  Run `process_data.py` to collect observation trajectories.
+
+   ```python
+   python dataset/process_data.py --game $env$
+   ```
+
+If you discover missing data or find it difficult to download the dataset, we provide another alternative to train an expert SAC agent to collect expert observations following instructions below: 
+
+1. Train an expert SAC agent from scratch.
+
+   ```python
+   python dataset/sac_expert.py --env_id $env$NoFrameskip-v4 --mode train --buffer_size 1000000 --seed 0
+   ```
+
+   After training, the SAC checkpoints will be stored in  `dataset/sac-exp/SAC_$env$NoFrameskip-v4_seed0/SAC*.pth` and the training log will be recorded in `dataset/sac-exp/SAC_$env$NoFrameskip-v4_seed0/events.out.tfevents.*` .
+
+2. Use the trained SAC agent to collect trajectories.
+
+   ```python
+   python dataset/sac_expert.py --env_id $env$NoFrameskip-v4 --mode test --buffer_size 100000 --test_checkpoints dataset/sac-exp/SAC_$env$NoFrameskip-v4_seed0/SAC*.pth
+   ```
+
+Regardless of the methods, all collected trajectories will be stored in `dataset/$env$`. Each `*.pkl`  save continuous expert stacked states.
+
+## Pretraining
+
+For example, to offline pretrain a State-to-go Transformer with collected expert observations in Breakout environment,  just run `pretrain.py`:
+
+```python
+python pretrain.py --algo STG --game Breakout --g_coff 0.3 --l2_coff 0.5 --tdr_coff 0.1
 ```
 
-- ppo-atari.py PPO baseline，模型和训练结果保存至checkpoints/PPO_BreakoutNoFrameskip-v4_seed0(举例)，包括events.out.tfevents.\*和PPO_epi\*_rtn\*.pth和return.pkl
-``` 
-python ppo_atari.py --env_id BreakoutNoFrameskip-v4 --clipframe 1 --total_timesteps 10000000 --seed 0  # 训练示例
+Similar commands for ELE:
+
+```python
+python pretrain.py --algo ELE --game Breakout --tdr_coff 0.5 
 ```
 
-2.STG
+> If you want to use your own observation dataset or have moved the generated dataset, just additionally set `--src_root`.
 
-- SSmodelTDC.py 训练SS模型，分类自监督预测相邻两个状态时间步差距，结果保存在ssmodel-exp\Freeway_expert_TDC_atariCNN_class5_seed666中，包括\*.pt(完整模型而不是仅模型参数)和训练数据train.csv。直接运行即可训练模型，注意修改game和src_root和Config.n_epoch。
-- SSmodelTDR.py 训练SS模型，回归自监督预测相邻两个状态时间步差距，类似SSmodelTDC.py
-- ppo-intrinsic-ss.py 加入intrinsic的PPO，三种intrinsic：prediction_error(pe),discrimination_score(ds),progress_span(ps)，模型和训练结果保存同上，注意ss_rewards.pkl
+After pretraining, the pretrained model weights will be saved in `pretrain-exp/$env$_$model$/$model$_*.pth`. All statistical data of loss functions will be recorded in `pretrain-exp/$env$_$model$/$train*.csv`. We can plot the learning curve by running `vis_csv.py`:
 
-``` 
-CUDA_VISIBLE_DEVICES=0 python ppo-intrinsic-ss.py --seed 0 --intrinsic ds --ds_coef -1 --env_reward 1 --ssmodel \*.pth  # environment_reward-discrimination_score训练示例
-CUDA_VISIBLE_DEVICES=0 python ppo-intrinsic-ss.py --seed 0 --intrinsic dsps --ds_coef -1 --ps_coef 0.1 --env_reward 0 --ssmodel \*.pth  #  -discrimination_score + 0.1 * temporal_progress训练示例
+```python
+python visualize/vis_csv.py --root ../pretrain-exp/$env$_$model$
 ```
 
-3.OTG
+If the curve of total loss nearly converges, it is time to finish pretraining.
 
-- OOmodelTDC.py 训练OO模型，类似SSmodelTDC.py
+## RL via Pretrained Model
 
-- ppo-Intrinsic-oo.py 类似ppo-intrinsic-ss.py
+The pretrained model will be subsequently used for provide intrinsic rewards for downstream RL tasks. To implement STG in Breakout environment as an example, you can run `ppo_intrinsic.py` following:
 
-4.comparision
+```python
+python ppo_intrinsic.py --algo STG --env_reward 0 --env_name BreakoutNoFrameskip-v4 --seed 0 --pretrained_model pretrain-exp/Breakout_STG/Breakout_*.pth --total_timesteps 20000000 --intrinsic ds --ds_coef -0.6 --gae_lambda 0.1
+```
 
-- SSmodelELE.py 类似SSmodelTDC.py使用，减少了SSTransformer模块直接用progress作为intrinsic，pipeline也是先SSmodelELE.py预训练再ppo-intrinsic-ss.py
-- GAIfO.py 直接在线训练Discriminator获得intrinsic，直接执行在线训练
+By modifying `algo` and `pretrained_model` , you can implement experiments of ELE/STG- with the same setting. If you want to try STG*, you can simply modify intrinsic:
+```python
+python ppo_intrinsic.py --algo STG --env_reward 0 --env_name BreakoutNoFrameskip-v4 --seed 0 --pretrained_model pretrain-exp/Breakout_STG/Breakout_*.pth --total_timesteps 20000000 --intrinsic dsps --ds_coef -0.6 --ps_coef 0.01 --gae_lambda 0.1
+```
 
-## 
+Also, we compare our method with online algorithm GAIfO, which has no pretraining phase in comparision with STG and ELE. You can simply run our `GAIfO.py` in Breakout as following:
+
+```python
+python ppo_GAIfO.py --algo GAIfO --env_name BreakoutNoFrameskip-v4 --seed 0 --total_timesteps 20000000 --intrinsic_coef 2.0
+```
+
+The checkpoints will be saved in `ppo-exp/*/*.pth` and the tensorboard records will be stored in `ppo-exp/*/events.out.tfevents.*`. 
+
+## Visualization
+
+After running `ppo_intrinsic.py` and `GAIfO.py` in each environment using each algorithm for at least 4 seeds, the training results can be naturally and clearly visualized by running: 
+
+```python
+python visualize/vis_tb.py
+```
+
+The curves with mean and standard deviation will be displayed in `vis-res/$env$.pdf`. By modifying the labels and data groups, we can also visualize more ablation results.
+
+To check the quality of learned representation,  we use Grad-CAM for CNN visualization. 
+
+```python
+python visualize/vis_cam.py --env Breakout --algo STG
+```
+
+By running `vis_cam.py` as above, we can visualize saliency maps of different CNN layers. The same for ELE and other envvironments. The visualization results will be saved in `vis-res`.

@@ -1,4 +1,4 @@
-import random,argparse
+import random
 from glob import glob
 from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
@@ -8,13 +8,11 @@ import numpy as np
 import torch, pickle
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import Logger,setseed
-from config import STGConfig
+from utils import Logger
 from networks import AtariCNN,TDR,CSABlock,Discriminator
 
 
 class STGTransformer(nn.Module):
-    """  the full GPT language model, with a context size of block_size """
     def load(self, stgmodel_path):
         if stgmodel_path.endswith('.pth'):
             ckpt = self.state_dict()
@@ -31,7 +29,7 @@ class STGTransformer(nn.Module):
         self.config = config
         # input embedding
         self.encoder = AtariCNN(4,config.n_embd)
-        '''nn.Parameter()进入模型可更新参数中'''
+        # positional encoding
         self.pos_emb = nn.Parameter(torch.zeros(1, config.block_size, config.n_embd))
         self.global_pos_emb = nn.Parameter(torch.zeros(1, config.max_timestep, config.n_embd))
         self.drop = nn.Dropout(config.embd_pdrop)
@@ -60,13 +58,6 @@ class STGTransformer(nn.Module):
             module.weight.data.fill_(1.0)
 
     def configure_optimizers(self):
-        """
-        This long function is unfortunately doing something very simple and is being very defensive:
-        We are separating out all parameters of the model into two buckets: those that will experience
-        weight decay for regularization and those that won't (biases, and layernorm/embedding weights).
-        We are then returning the PyTorch optimizer object.
-        """
-
         # separate out all parameters to those that will and won't experience regularizing weight decay
         decay = set()
         no_decay = set()
@@ -89,7 +80,6 @@ class STGTransformer(nn.Module):
         no_decay.add('pos_emb')
         no_decay.add('global_pos_emb')
 
-        # 参数必将仅能处于decay/no_decay的集合中
         param_dict = {pn: p for pn, p in self.named_parameters()}
         inter_params = decay & no_decay
         union_params = decay | no_decay
@@ -111,45 +101,45 @@ class STGTransformer(nn.Module):
         return: (batch_size, block_size, emb_dim)
         '''
         batch_size, block_size, c, w, h = data.shape
-        # 输入特征
-        embeddings = self.encoder(data.view(-1, c, w, h)).view(batch_size, block_size, self.config.n_embd)  # 先展平再reshape回
+        embeddings = self.encoder(data.view(-1, c, w, h)).view(batch_size, block_size, self.config.n_embd)
         input_embedding,target_embedding = embeddings[:, :-1, :],embeddings[:, 1:, :]
-        # 位置编码:局部(+全局)
+        # positional encoding
         position_encodings = self.pos_emb[:, :input_embedding.shape[1], :]
         if timesteps is not None:
             timesteps = timesteps.clip(max=self.config.max_timestep-1)
             position_encodings = position_encodings + self.global_pos_emb.repeat_interleave(input_embedding.shape[0], dim=0).gather(1, timesteps.repeat_interleave(self.config.n_embd, dim=-1))
-        # 核心
+        # CSA
         x = self.ln_f(self.blocks(self.drop(input_embedding + position_encodings)))  # (bs,block_size,n_emb)
-        # 输出
+        # decode
         delta_embedding = self.out(x)
         expert_embedding = delta_embedding + input_embedding
-        # 更新判别器
-        D_loss = self.discriminator.update(input_embedding.detach(), expert_embedding.detach(), target_embedding.detach(),config.d_coff)
-        # 各种loss计算
+        # update discriminator
+        D_loss = self.discriminator.update(input_embedding.detach(), expert_embedding.detach(), target_embedding.detach(),self.config.d_coff)
+        # calculate adversarial loss and MSE loss
         L2_loss = F.mse_loss(delta_embedding, target_embedding - input_embedding)
         G_loss = -self.discriminator(input_embedding, expert_embedding).mean()
-        # time-distance
+        # calculate temporal distance
         idx1 = np.arange(self.config.block_size)
         idx2 = np.random.permutation(self.config.block_size)
         timesteps = timesteps.repeat_interleave(self.config.block_size).reshape(-1, self.config.block_size)
-        idx1, idx2 = torch.LongTensor(idx1).to(device), torch.LongTensor(idx2).to(device)
+        idx1, idx2 = torch.LongTensor(idx1).to(self.config.device), torch.LongTensor(idx2).to(self.config.device)
         time_dis = self.tdr.symlog(idx1 + timesteps, idx2 + timesteps)
         time_pred = self.tdr(target_embedding[:, idx1, :], target_embedding[:, idx2, :])
         tdr_loss = F.mse_loss(time_pred.view(time_dis.shape), time_dis)
-        # 更新总损失
-        loss = self.config.l2_coff * L2_loss + self.config.g_coff * G_loss + self.config.tdr_coff * tdr_loss # L1 + L2 + Adversary
+        # total loss
+        loss = self.config.l2_coff * L2_loss + self.config.g_coff * G_loss + self.config.tdr_coff * tdr_loss
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
         return L2_loss.item(), G_loss.item(), D_loss.item(), tdr_loss.item(), loss.item()
 
-    def trainSTG(self):
-        root = './ssmodel-exp'
+    def trainSTG(self,src):
+        root = './pretrain-exp'
         if not os.path.exists(root):
             os.mkdir(root)
-        save_dir = os.path.join(root,f"{game}_{'STG' if config.tdr_coff!=0 else 'STG-'}_seed{args.seed}")
-        exp_logger = Logger(save_dir, f'trainss.csv',fieldnames=['update','Total_loss', 'L2_loss', 'G_loss', 'D_loss','TDR_loss'])
+        mode = 'STG' if self.config.tdr_coff!=0 else 'STG-'
+        save_dir = os.path.join(root,f"{self.config.game}_{mode}")
+        exp_logger = Logger(save_dir, f'trainstg.csv',fieldnames=['update','Total_loss', 'L2_loss', 'G_loss', 'D_loss','TDR_loss'])
         self.train()  
         cnt = 0
         for i_epoch in range(self.config.n_epoch):
@@ -159,98 +149,27 @@ class STGTransformer(nn.Module):
                 states = pickle.load(open(os.path.join('.', src[i_src]), 'rb'))['states']
                 minibatch = states.shape[0] // self.config.block_size
                 for i in range(minibatch):
-                    step = torch.randint(states.shape[0] - self.config.block_size, (config.batch_size, 1, 1),dtype=torch.long)  # (config.batch_size,1,1)
+                    step = torch.randint(states.shape[0] - self.config.block_size, (self.config.batch_size, 1, 1),dtype=torch.long)  # (config.batch_size,1,1)
                     batch = torch.Tensor(states[np.array([list(range(id, id + self.config.block_size + 1)) for id in step])]) / 255.0  # (config.batch_size, config.block_size+1, 4, 84, 84)
-                    L2_loss, G_loss, D_loss, tdr_loss, tot_loss = ssmodel.update(batch.to(device), step.to(device))
+                    L2_loss, G_loss, D_loss, tdr_loss, tot_loss = self.update(batch.to(self.config.device), step.to(self.config.device))
                     exp_logger.update(fieldvalues=[cnt, tot_loss, L2_loss, G_loss, D_loss, tdr_loss])
                     cnt += 1
-                    if cnt % 5000 == 0:torch.save(self.state_dict(), f'{save_dir}/{cnt}.pth')
-                    if cnt % 100 == 0:print(f'update:{cnt:05d} | loss:{tot_loss:.6f} | L2_loss:{L2_loss:.6f} | G_loss:{G_loss:.6f} | D_loss:{D_loss:.6f} | TDR_loss:{tdr_loss:.6f}')
-        torch.save(self.state_dict(), f'{save_dir}/{cnt}.pth')
-
-    def visulize_embedding(self,dim=2):  # TSNE对torch张量降维
-        self.eval()
-        states = pickle.load(open(os.path.join('../expert\Breakout\clipped', src[0]), 'rb'))['states']
-        step = torch.arange(0, states.shape[0] - config.block_size - 1, config.block_size).long().view(-1, 1,1)
-        batch = torch.Tensor(states[np.array([list(range(id, id + config.block_size + 1)) for id in step])]) / 255.0
-        step,batch = step.to(device),batch.to(device)
-        batch_size, block_size, c, w, h = batch.shape
-        embeddings = self.encoder(batch.view(-1, c, w, h)).view(batch_size, block_size,self.config.n_embd)
-        input_embedding, target_embedding = embeddings[:, :-1, :], embeddings[:, 1:, :]
-        # 位置编码:局部(+全局)
-        position_encodings = self.pos_emb[:, :input_embedding.shape[1], :]
-        if step is not None:
-            timesteps = step.clip(max=self.config.max_timestep - 1)
-            position_encodings = position_encodings + self.global_pos_emb.repeat_interleave(
-                input_embedding.shape[0], dim=0).gather(1, timesteps.repeat_interleave(self.config.n_embd, dim=-1))
-        # 核心
-        x = self.ln_f(self.blocks(self.drop(input_embedding + position_encodings)))  # (bs,block_size,n_emb)
-        # 输出
-        delta_embedding = self.out(x)
-        pred_embedding = delta_embedding + input_embedding
-        # 降维
-        tsne = TSNE(n_components=dim, init='pca', random_state=0, perplexity=30.0, n_iter=1000, verbose=0)  # verbose=0不输出日志
-        vis_in = tsne.fit_transform(input_embedding.reshape(-1, self.config.n_embd).detach().cpu().numpy())
-        vis_out = tsne.fit_transform(pred_embedding.reshape(-1, self.config.n_embd).detach().cpu().numpy())
-        # 可视化
-        params = {
-            "font.size": 14,  # 全局字号
-            'font.family': 'STIXGeneral',  # 全局字体，微软雅黑(Microsoft YaHei)可显示中文
-            "figure.subplot.wspace": 0.2,  # 图-子图-宽度百分比
-            "figure.subplot.hspace": 0.4,  # 图-子图-高度百分比
-            "axes.spines.right": True,  # 坐标系-右侧线
-            "axes.spines.top": True,  # 坐标系-上侧线
-            "axes.titlesize": 14,  # 坐标系-标题-字号
-            "axes.labelsize": 14,  # 坐标系-标签-字号
-            "legend.fontsize": 14,  # 图例-字号
-            "xtick.labelsize": 12,  # 刻度-标签-字号
-            "ytick.labelsize": 12,  # 刻度-标签-字号
-            "xtick.direction": 'in',  # 刻度-方向
-            "ytick.direction": 'in',  # 刻度-方向
-            "axes.grid": True,  # 坐标系-网格
-            # "grid.linestyle": "--"  # 网格-线型
-        }
-        plt.rcParams.update(params)
-        if dim == 2:
-            plt.scatter(vis_in[:, 0], vis_in[:, 1], c='b', marker='o', s=10, alpha=0.5, label='$e_t$')
-            plt.scatter(vis_out[:, 0], vis_out[:, 1], c='r', marker='o', s=10, alpha=0.5, label='$e_{t+1}$')
-        else:
-            from mpl_toolkits.mplot3d import Axes3D
-            plt.scatter(vis_in[:, 0], vis_in[:, 1], vis_in[:, 2], c='b', marker='o', s=10, alpha=0.5, label='$e_t$')
-            plt.scatter(vis_out[:, 0], vis_out[:, 1], vis_out[:, 2], c='r', marker='o', s=10, alpha=0.5, label='$e_{t+1}$')
-        plt.legend(loc='best')
-        plt.show()
-        print()
+                    if cnt % 5000 == 0:
+                        torch.save(self.state_dict(), f'{save_dir}/{mode}_{cnt}.pth')
+                    if cnt % 100 == 0:
+                        print(f'update:{cnt:05d} | loss:{tot_loss:.6f} | L2_loss:{L2_loss:.6f} | G_loss:{G_loss:.6f} | D_loss:{D_loss:.6f} | TDR_loss:{tdr_loss:.6f}')
+        torch.save(self.state_dict(), f'{save_dir}/{mode}_{cnt}.pth')
 
     def compare_embedding(self,data_path,ckpt_paths,labels=['$STG$','$STG^{-}$']): 
-        params = {
-            "font.size": 17,  # 全局字号
-            'font.family': 'STIXGeneral',  # 全局字体，微软雅黑(Microsoft YaHei)可显示中文
-            "figure.subplot.wspace": 0.2,  # 图-子图-宽度百分比
-            "figure.subplot.hspace": 0.4,  # 图-子图-高度百分比
-            "axes.spines.right": True,  # 坐标系-右侧线
-            "axes.spines.top": True,  # 坐标系-上侧线
-            "axes.titlesize": 17,  # 坐标系-标题-字号
-            "axes.labelsize": 17,  # 坐标系-标签-字号
-            "legend.fontsize": 17,  # 图例-字号
-            "xtick.labelsize": 16,  # 刻度-标签-字号
-            "ytick.labelsize": 16,  # 刻度-标签-字号
-            "xtick.direction": 'in',  # 刻度-方向
-            "ytick.direction": 'in',  # 刻度-方向
-            "axes.grid": True,  # 坐标系-网格
-            "grid.linestyle": "--"  # 网格-线型
-        }
-        plt.rcParams.update(params)
-        palette = pyplot.get_cmap('Set1')
         colors=[np.array([60, 220, 215])/255.,np.array([205, 255, 120])/255.]
         tsne = TSNE(n_components=2, init='pca', random_state=0, perplexity=30.0, n_iter=1000, verbose=0) 
 
         self.eval()
         selected_traj = random.choice(glob(data_path))
         states = pickle.load(open(selected_traj, 'rb'))['states']
-        step = torch.arange(0, states.shape[0] - config.block_size - 1, config.block_size).long().view(-1, 1,1)
-        batch = torch.Tensor(states[np.array([list(range(id, id + config.block_size + 1)) for id in step])]) / 255.0
-        step,batch = step.to(device),batch.to(device)
+        step = torch.arange(0, states.shape[0] - self.config.block_size - 1, self.config.block_size).long().view(-1, 1,1)
+        batch = torch.Tensor(states[np.array([list(range(id, id + self.config.block_size + 1)) for id in step])]) / 255.0
+        step,batch = step.to(self.config.device),batch.to(self.config.device)
         batch_size, block_size, c, w, h = batch.shape
         for ckpt,label,color in zip(ckpt_paths,labels,colors):
             self.load(ckpt)
@@ -259,7 +178,7 @@ class STGTransformer(nn.Module):
             plt.scatter(vis_in[:, 0], vis_in[:, 1], c=color, marker='o', s=8, alpha=0.99,label=label)# 
         plt.legend(loc='best')
         plt.savefig(os.path.splitext(ckpt_paths[0])[0]+'.pdf')
-        plt.savefig(os.path.splitext(ckpt_paths[0])[0]+'.png')
+        # plt.savefig(os.path.splitext(ckpt_paths[0])[0]+'.png')
         print()
 
     def cal_intrinsic_s2e(self,states_ls,steps_ls):
@@ -302,24 +221,3 @@ class STGTransformer(nn.Module):
                     discrimination_score = torch.cat((discrimination_score, ds), dim=0)
                     progress_span = torch.cat((progress_span, ps), dim=0)
             return {'ADV':discrimination_score,'TD':progress_span}
-
-
-if __name__ == '__main__':
-    # parser
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--game", type=str, default='Freeway')
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--g_coff", type=float, default=0.3)
-    parser.add_argument("--d_coff", type=float, default=0.5)
-    parser.add_argument("--tdr_coff", type=float, default=0.1)
-    parser.add_argument("--src_root", type=str, default='')
-    parser.add_argument("--device", type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
-    args = parser.parse_args()
-    game,device = args.game, args.device
-
-    setseed(args.seed)
-    src = glob(os.path.join(f'./expert/{game}', '*.pkl'))
-    config = STGConfig(d_coff=args.d_coff, g_coff=args.g_coff, tdr_coff=args.tdr_coff)
-    ssmodel = STGTransformer(config).to(device)
-    ssmodel.compare_embedding('/home/zhoubohan/atari/expert/Freeway/clipped/*.pkl',['ssmodel-exp/Freeway_clipped_TDR_atariCNN_seed666/Freeway_18160.pth','ssmodel-exp/Freeway_unclipped_L2Adv_atariCNN_seed666/60000.pth'])
-    ssmodel.trainSTG()

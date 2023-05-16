@@ -139,3 +139,6 @@ def checkdata(imgs, s2e=None, winname='atari'):  # imgs是(n,w,h,c)的np.uint8
             break
 
 
+
+
+

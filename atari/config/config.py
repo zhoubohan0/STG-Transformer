@@ -1,4 +1,3 @@
-
 class ELEConfig:
     """ base GPT config, params common to all GPT versions """
     # model hyperparameters
@@ -14,11 +13,12 @@ class ELEConfig:
     weight_decay = 0.1
     learning_rate = 1e-4
     betas = (0.9, 0.95)
-    '''loss coefficients'''
+    # loss coefficients
     tdr_coff = 0.5
-
+    # training setting
     n_epoch = 200
     batch_size = 16
+    device = "cuda"
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -37,14 +37,15 @@ class STGConfig:
     weight_decay = 0.1
     learning_rate = 1e-4
     betas = (0.9, 0.95)
-    '''loss coefficients'''
+    # loss coefficients
     l2_coff = 0.5
     g_coff = 0.05
     d_coff = 0.5
     tdr_coff = 0.1
-
+    # training setting
     n_epoch = 200
     batch_size = 16
+    device = "cuda"
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
