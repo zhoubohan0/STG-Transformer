@@ -1,0 +1,5 @@
+minecraft/expert_traj/*
+*.log
+*.pyc
+logs/
+.vscode
