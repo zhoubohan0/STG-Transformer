@@ -1,4 +1,4 @@
-import mineagent.common
+import mineagent.common.network_utils as utils
 import os
 import time
 import torch

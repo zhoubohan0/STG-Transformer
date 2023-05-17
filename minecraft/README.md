@@ -4,18 +4,7 @@ Plan4MC is a multi-task agent in Minecraft, solving long-term tasks via planning
 
 ## Overview
 
-The complete steps to run STG model for Minecraft RL tasks are as follows.
-
-<!-- - Install MineDojo environment following the [official document](https://docs.minedojo.org/sections/getting_started/install.html#prerequisites).  It requires python >= 3.9. We install jdk 1.8.0_171.
-
-- Upgrade the MineDojo package: 
-	- Delete the original package `pip uninstall minedojo`.
-	- Download our [modified MineDojo](https://github.com/PKU-RL/MCEnv). Run `python setup.py install`.
-	- To this end, you can successfully run `validate_install.py` [here](https://github.com/MineDojo/MineDojo/tree/main/scripts).
-
-- Install python packages in `requirements.txt`. Note that we require PyTorch>=1.8.1 and x-transformers==0.27.1.
-
-- Download the [pretrained MineCLIP model](https://disk.pku.edu.cn:443/link/86843F120DF784DCC117624D2E90A569) named `attn.pth`.  Move the file to `mineclip_official/`. -->
+The completed steps to run our STG model for Minecraft RL tasks are as follows.
 
 ## Step 0: Set up the MineDojo environment
 
@@ -33,63 +22,56 @@ The complete steps to run STG model for Minecraft RL tasks are as follows.
         ```
         pip uninstall minedojo
         ```
-    - xxx
-    - Verify the installation 
+    - Clone the modified repo
+        ```
+        git clone https://github.com/PKU-RL/MCEnv.git
+        ```
+    - Run the setup file
+        ```
+        cd MCEnv && python setup.py install 
+        ```
+  - Verify the installation 
       ```
-      MINEDOJO_HEADLESS python validate_install.py
+      MINEDOJO_HEADLESS=1 python validate_install.py
       ```
-- Clone this repo:
+      You should see "[INFO] Installation Success" if your installation is successful.
+      
+      Note that we add `MINEDOJO_HEADLESS=1` as a prefix to avoid Malmo error. This can happen when your system does not support visualization display. Otherwise, yuo can feel free to remove it.  
+      
+  - Clone our STG-Transformer repo
   ```
-  git clone 
+  git clone https://github.com/zhoubohan0/STG-Transformer.git
   ```
 
-- Install python packages in ` requirements.txt`. Note that we require PyTorch >= 1.8.1 and x-transformers==0.27.1. We reconmmend you to use Huawei if you are located in mainland China to speed up the installation process.
+- Install python packages in `STG-Transformer/minecraft/requirements.txt`. Note that we require PyTorch >= 1.8.1 and x-transformers==0.27.1.
   ```
   pip install -r requirements.txt 
   ```
+  If the speed is too low, try this:
+  ```
+  pip install -r requirements.txt -i https://mirrors.huaweicloud.com/repository/pypi/simple
+  ```
+
+
 ## Step 1: Collect expert trajectories
-Run the following code in the directory `STG-Transformer/minecraft`: 
 
-`python generate_expert_traj.py --task harvest_milk_with_empty_bucket_and_cow --test-episode 30`
+As we discussed in our paper, we utilized the learned policy in [Plan4MC](https://github.com/PKU-RL/Plan4MC) and [CLIP4MC](https://github.com/PKU-RL/CLIP4MC) to collect our expert datasets. Specifically, 
 
+### Task 'Milk a Cow' and Task 'Gather Wool'
+- Download the [pretrained MineCLIP model](https://disk.pku.edu.cn:443/link/86843F120DF784DCC117624D2E90A569) named `attn.pth`.  Move this to the directory `minecraft/mineagent/official`.
 
-- We provide 24 diverse tasks configured in `envs/hard_task_conf.yaml`.  To create an environment for a task:
-```python
-from envs.minecraft_hard_task import MinecraftHardHarvestEnv
-from minedojo.sim import InventoryItem
-import utils
-task_name = 'harvest_mutton_with_diamond_sword'
-task_conf = utils.get_yaml_data('envs/hard_task_conf.yaml')[task_name]
-init_items = {}
-if 'initial_inventory' in task_conf:
-    init_items = task_conf['initial_inventory']
-    init_inv = [InventoryItem(slot=i, name=k, variant=None, quantity=task_conf['initial_inventory'][k]) for i,k in enumerate(list(task_conf['initial_inventory'].keys()))]
-    task_conf['initial_inventory'] = init_inv
-env = MinecraftHardHarvestEnv(image_size=(160,256), **task_conf)
-```
+- Run the following code in the directory `STG-Transformer/minecraft`: 
 
-- To generate task names, initial plans and involved skills for all the tasks, run `python plan_all_tasks.py`.
+    ``` 
+    python generate_expert_traj.py --task harvest_milk_with_empty_bucket_and_cow --test-episode 100
+    ```
+  If you encounter Malmo error, add `MINEDOJO_HEADLESS=1` at the head of this command:
+  ``` 
+  MINEDOJO_HEADLESS=1 python generate_expert_traj.py --task harvest_milk_with_empty_bucket_and_cow --test-episode 100
+    ```
 
+  You can see the collected expert datasets under the newly created directory `minecraft/expert_traj`. '1' indicates the trajectory collected is successful while '0' indicates the trajectory is unsuccessful; 
 
-## Plan4MC
-- Pre-trained models for skills are released in `skills/models/`.
-- To test Plan4MC on the task 'get_furnace_nearby_with_logs' as an example,  run `python test.py --task get_furnace_nearby_with_logs`.   Arguments:
+### Task 'arvest Tallgrass' and Task 'Pick a Flower'
 
-	\-\-task:  available tasks are listed in `envs/hard_task_conf.yaml`.
-
-	\-\-save-path: output directory for testing results.
-
-	\-\-test-episode: number of testing episodes.
-
-	\-\-save-gif: set to 1 to save testing videos.
-
-## Citation
-```bibtex
-@article{yuan2023plan4mc,
-      title={{Plan4MC}: Skill Reinforcement Learning and Planning for Open-World {Minecraft} Tasks}, 
-      author={Yuan, Haoqi and Zhang, Chi and Wang, Hongcheng and Xie, Feiyang and Cai, Penglin and Dong, Hao and Lu, Zongqing},
-      journal={arXiv preprint arXiv:2303.16563},
-      year={2023},
-}
-```
-
+For these two tasks, we trained a CLIP4MC policy from scratch and use the successful gifs saved during the training stages as our expert datasets. Please refer to [CLIP4MC](https://github.com/PKU-RL/CLIP4MC) for more details about how to train CLIP4MC policy.
