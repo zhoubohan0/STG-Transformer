@@ -4,7 +4,6 @@ import pickle
 import random
 import sys
 from glob import glob
-
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,10 +13,7 @@ from sklearn.manifold import TSNE
 from torch import nn
 
 sys.path.append(os.path.split(os.path.abspath(os.path.dirname(__file__)))[0])
-
-
-# from network import *
-# plt.rcParams['text.usetex'] = True
+plt.rcParams['text.usetex'] = True
 
 
 class Cal_CAM(nn.Module):
@@ -26,11 +22,11 @@ class Cal_CAM(nn.Module):
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.model = model.to(self.device)
         self.encoder = self.model.encoder._modules['feature']
-        # 要求梯度的层
+        # target layer of network
         self.feature_layer = target_layer
-        # 记录梯度
+        # gradient recorder
         self.gradient = []
-        # 记录输出的特征图
+        # feature-map recorder
         self.output = []
 
     def save_grad(self, grad):
@@ -42,49 +38,46 @@ class Cal_CAM(nn.Module):
     def get_feature(self):
         return self.output[-1][0]
 
-    # 计算最后一个卷积层的梯度，输出梯度和最后一个卷积层的特征图
     def getGrad(self, input1, input2):
+        # output gradient and feature map of the target layer
         input1, input2 = torch.Tensor(input1).to(self.device).requires_grad_(True), torch.Tensor(input2).to(
             self.device).requires_grad_(True)
         x = input1
         for num, (name, module) in enumerate(self.encoder._modules.items()):
-            # 待提取特征图的层
             if name == self.feature_layer:
                 x = module(x)
                 x.register_hook(self.save_grad)
                 self.output.append([x])
-            # 其他层跳过
             else:
                 x = module(x)
 
         y = self.encoder(input2)
         tdr = self.model.tdr(x[0], y[0])
         self.model.zero_grad()
-        # 反向传播获取梯度
+        # backpropagation to obtain gradient
         tdr.backward(retain_graph=True)
-        # 获取特征图的梯度
+        # get gradient
         grad_val = self.get_grad()
         feature = self.get_feature()
         return grad_val, feature, input1.grad
 
-    # 计算CAM
+    # calculate CAM
     def getCam(self, grad_val, feature):
-        # 对特征图的每个通道进行全局池化
+        # global average pooling of each channel in the feature map -> weights
         alpha = torch.mean(grad_val, dim=(2, 3)).cpu()
         feature = feature.cpu()
-        # 将池化后的结果和相应通道特征图相乘
+        # weighted feature map
         cam = torch.zeros(*feature.shape[2:4])
         for idx in range(alpha.shape[1]):
             cam = cam + alpha[0][idx] * feature[0][idx]
-        # 进行ReLU操作
+        # ReLU
         cam = np.maximum(cam.detach().numpy(), 0)
         # plt.imshow(cam)
         # plt.colorbar()
         # plt.savefig("cam.jpg")
 
-        # 将cam区域放大到输入图片大小
+        # resize and normalize for visualization
         cam_ = cv2.resize(cam, (84, 84))
-        # 归一化
         cam_ = cam_ - np.min(cam_)
         cam_ = cam_ / np.max(cam_)
         return cam_
@@ -102,21 +95,19 @@ class Cal_CAM(nn.Module):
 
     def show_img(self, cam_, img, save):
         params = {
-            "font.size": 17,  # 全局字号
-            'font.family': 'STIXGeneral',  # 全局字体，微软雅黑(Microsoft YaHei)可显示中文
-            "figure.subplot.wspace": 0.2,  # 图-子图-宽度百分比
-            "figure.subplot.hspace": 0.4,  # 图-子图-高度百分比
-            "axes.spines.right": True,  # 坐标系-右侧线
-            "axes.spines.top": True,  # 坐标系-上侧线
-            "axes.titlesize": 17,  # 坐标系-标题-字号
-            "axes.labelsize": 17,  # 坐标系-标签-字号
-            "legend.fontsize": 17,  # 图例-字号
-            "xtick.labelsize": 16,  # 刻度-标签-字号
-            "ytick.labelsize": 16,  # 刻度-标签-字号
-            "xtick.direction": 'out',  # 刻度-方向
-            "ytick.direction": 'out',  # 刻度-方向
-            # "axes.grid": True,  # 坐标系-网格
-            # "grid.linestyle": "--"  # 网格-线型
+            "font.size": 17,
+            'font.family': 'STIXGeneral',
+            "figure.subplot.wspace": 0.2,
+            "figure.subplot.hspace": 0.4,
+            "axes.spines.right": True,
+            "axes.spines.top": True,
+            "axes.titlesize": 17,
+            "axes.labelsize": 17,
+            "legend.fontsize": 17,
+            "xtick.labelsize": 16,
+            "ytick.labelsize": 16,
+            "xtick.direction": 'out',
+            "ytick.direction": 'out',
         }
         plt.rcParams.update(params)
         # fig, axes = plt.subplots(1, 2, figsize=(10, 4))
