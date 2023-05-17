@@ -9,9 +9,9 @@ This is the official implementation of "Learning from Visual Observation via Off
 
 Experiments are conducted in two video game environments: Atari and Minecraft. Codes & instructions about Atari can refer to  **atari** and **minecraft** directory respectively.
 
-## Installation
+## To begin
 ```
-pip install git+https://github.com/zhoubohan0/STG-Transformer
+pip clone https://github.com/zhoubohan0/STG-Transformer
 ```
 
 
