@@ -1,26 +1,26 @@
 import argparse
+import itertools
 import os
 import pickle
-import time
 import random
-from glob import glob
-import itertools
-import numpy as np
-import gym
-import cv2
+import time
 import warnings
+from glob import glob
+
+import numpy as np
 import torch
+from tensorboardX import SummaryWriter
 from torch import nn, optim
-from collections import deque
 from torch.distributions import Categorical
 from torch.nn.utils import spectral_norm
-from tensorboardX import SummaryWriter
-from utils import make_env, setseed, layer_init
+
+from util import make_env, setseed, layer_init
 
 warnings.filterwarnings('ignore')
 
+
 class ACAgent(nn.Module):
-    def __init__(self, n_action,emb_dim=512):
+    def __init__(self, n_action, emb_dim=512):
         super().__init__()
         self.feature = nn.Sequential(
             layer_init(nn.Conv2d(4, 32, 8, stride=4)),
@@ -28,7 +28,7 @@ class ACAgent(nn.Module):
             layer_init(nn.Conv2d(32, 64, 4, stride=2)),
             nn.ReLU(),
             layer_init(nn.Conv2d(64, 64, 3, stride=1)),
-            nn.ReLU(),nn.Flatten(),
+            nn.ReLU(), nn.Flatten(),
             layer_init(nn.Linear(64 * 7 * 7, 512)),
             nn.ReLU(),
         )
@@ -49,6 +49,7 @@ class ACAgent(nn.Module):
         )
         self.bce = nn.BCEWithLogitsLoss()
         self.dis_optimizer = torch.optim.AdamW(self.discriminator.parameters(), lr=1e-4, betas=(0.9, 0.95))
+
     def get_value(self, x):
         if x.ndim < 4: x = x.unsqueeze(0)
         return self.critic(self.feature(x))
@@ -61,35 +62,45 @@ class ACAgent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy(), self.critic(hidden)
 
-    def update_cal_intrinsic(self,states_ls,expert_state_pool):
-        device,Dloss_ls = states_ls[0][0].device,[]
+    def update_cal_intrinsic(self, states_ls, expert_state_pool):
+        device, Dloss_ls = states_ls[0][0].device, []
         GAIfO_intrinsic = torch.Tensor(0).to(device)
         for i in range(len(states_ls)):
             interaction_states = torch.stack(states_ls[i])
-            b = random.choice(range(len(expert_state_pool)-len(interaction_states)))
-            expert_states = torch.Tensor(expert_state_pool[b:b+len(interaction_states)]).to(device)
+            b = random.choice(range(len(expert_state_pool) - len(interaction_states)))
+            expert_states = torch.Tensor(expert_state_pool[b:b + len(interaction_states)]).to(device)
             # update
-            interaction_score = self.discriminator(torch.cat((self.feature(interaction_states[:-1]), self.feature(interaction_states[1:])), -1)).squeeze(-1)  # (block_size,1)
-            expert_score = self.discriminator(torch.cat((self.feature(expert_states[:-1]), self.feature(expert_states[1:])), -1)).squeeze(-1)  # (block_size,1)
-            D_loss = self.bce(interaction_score, torch.ones_like(interaction_score)) + self.bce(expert_score,torch.zeros_like(expert_score))  # 1:non-expert;0:expert
+            interaction_score = self.discriminator(
+                torch.cat((self.feature(interaction_states[:-1]), self.feature(interaction_states[1:])), -1)).squeeze(
+                -1)  # (block_size,1)
+            expert_score = self.discriminator(
+                torch.cat((self.feature(expert_states[:-1]), self.feature(expert_states[1:])), -1)).squeeze(
+                -1)  # (block_size,1)
+            D_loss = self.bce(interaction_score, torch.ones_like(interaction_score)) + self.bce(expert_score,
+                                                                                                torch.zeros_like(
+                                                                                                    expert_score))  # 1:non-expert;0:expert
             self.dis_optimizer.zero_grad()
             D_loss.backward()
             self.dis_optimizer.step()
             Dloss_ls.append(D_loss.item())
             with torch.no_grad():
                 D = torch.sigmoid(interaction_score)
-                intri = torch.log(D+1e-5)  #-torch.log(1+1e-5-D)##torch.log(D/(1-D)+1e-5)
+                intri = torch.log(D + 1e-5)  # -torch.log(1+1e-5-D)##torch.log(D/(1-D)+1e-5)
                 GAIfO_intrinsic = torch.cat((GAIfO_intrinsic, -intri), dim=0)
         return GAIfO_intrinsic, np.mean(Dloss_ls)
+
 
 class PPO(nn.Module):
     def __init__(self, args):
         super(PPO, self).__init__()
         self.args = args
-        self.env = make_env(self.args.env_name, self.args.seed, self.args.record_video, self.args.run_name, self.args.clipframe)
+        self.env = make_env(self.args.env_name, self.args.seed, self.args.record_video, self.args.run_name,
+                            self.args.clipframe)
         self.n_action, self.obs_shape = self.env.action_space.n, (4, 84, 84)
         self.ACagent = ACAgent(self.n_action)
-        self.ac_optimizer = optim.Adam(itertools.chain(self.ACagent.feature.parameters(),self.ACagent.actor.parameters(),self.ACagent.critic.parameters()), lr=self.args.lr, eps=1e-5)  # trick
+        self.ac_optimizer = optim.Adam(
+            itertools.chain(self.ACagent.feature.parameters(), self.ACagent.actor.parameters(),
+                            self.ACagent.critic.parameters()), lr=self.args.lr, eps=1e-5)  # trick
         self.episode_returns = []
         self.intrinsic_rewards = []
 
@@ -97,6 +108,7 @@ class PPO(nn.Module):
         return 'GAIfO'
 
     def train_ppo(self):
+        setseed(self.args.seed)
         writer = SummaryWriter(f"ppo-exp/{self.args.run_name}")
         writer.add_text(
             "hyperparameters",
@@ -114,9 +126,9 @@ class PPO(nn.Module):
         num_updates = self.args.total_timesteps // self.args.num_steps
         for i_update in range(num_updates):
             if self.args.anneal_lr:
-                frac = 1.0 - i_update / num_updates #np.power(0.999,i_update /10000.)
+                frac = 1.0 - i_update / num_updates  # np.power(0.999,i_update /10000.)
                 self.ac_optimizer.param_groups[0]["lr"] = frac * self.args.lr
-            collect_states,ep_steps = [[]],[torch.LongTensor([ep_step]).view(1, 1, 1).to(self.args.device)]
+            collect_states, ep_steps = [[]], [torch.LongTensor([ep_step]).view(1, 1, 1).to(self.args.device)]
             for step in range(self.args.num_steps):
                 ep_step += 1
                 global_step += 1
@@ -139,20 +151,23 @@ class PPO(nn.Module):
                         self.episode_returns.append(ep_return)
                         n_epi = len(self.episode_returns)
                         if n_epi % self.args.log_freq == 0:
-                            print(f"episode:{n_epi} | global_step:{global_step} | episodic_return:{np.mean(self.episode_returns[-self.args.log_freq:]):.2f}")
+                            print(
+                                f"episode:{n_epi} | global_step:{global_step} | episodic_return:{np.mean(self.episode_returns[-self.args.log_freq:]):.2f}")
                         writer.add_scalar("charts/episodic_return", ep_return, global_step)
                         writer.add_scalar("charts/episodic_length", ep_length, global_step)
                         if n_epi % self.args.save_freq == 0:
-                            torch.save(self.state_dict(), os.path.join(f'ppo-exp/{self.args.run_name}',f'{self.__str__()}_epi{n_epi}_rtn{np.mean(self.episode_returns[-self.args.save_freq:]):.2f}.pth'))
+                            torch.save(self.state_dict(), os.path.join(f'ppo-exp/{self.args.run_name}',
+                                                                       f'{self.__str__()}_epi{n_epi}_rtn{np.mean(self.episode_returns[-self.args.save_freq:]):.2f}.pth'))
                         ep_step = 0
-                        collect_states[-1].append(obs),collect_states.append([]),ep_steps.append(torch.LongTensor([ep_step]).view(1, 1, 1).to(self.args.device))
+                        collect_states[-1].append(obs), collect_states.append([]), ep_steps.append(
+                            torch.LongTensor([ep_step]).view(1, 1, 1).to(self.args.device))
                         obs, done = torch.Tensor(self.env.reset()).to(self.args.device), False
                         break
             collect_states[-1].append(obs)
             # intrinsic
             if i_update % 20 == 0:
                 expert_obs_pool = pickle.load(open(random.choice(src), 'rb'))['states']  # (n,4,84,84)
-            intrinsic,dloss = self.ACagent.update_cal_intrinsic(collect_states,expert_obs_pool)
+            intrinsic, dloss = self.ACagent.update_cal_intrinsic(collect_states, expert_obs_pool)
             rewards = self.args.intrinsic_coef * intrinsic
             self.intrinsic_rewards.extend(intrinsic.tolist())
             # calculate loss of actor & critic
@@ -168,7 +183,8 @@ class PPO(nn.Module):
                         nextnonterminal = 1.0 - dones[t + 1]
                         nextvalues = values[t + 1]
                     delta = rewards[t] + self.args.gamma * nextvalues * nextnonterminal - values[t]
-                    advantages[t] = lastgaelam = delta + self.args.gamma * self.args.gae_lambda * nextnonterminal * lastgaelam
+                    advantages[
+                        t] = lastgaelam = delta + self.args.gamma * self.args.gae_lambda * nextnonterminal * lastgaelam
                 returns = advantages + values
             b_obs = observations.reshape(-1, *self.obs_shape)
             b_logprobs = logprobs.reshape(-1)
@@ -181,7 +197,8 @@ class PPO(nn.Module):
                 np.random.shuffle(b_inds)
                 for start in range(0, self.args.num_steps, self.args.minibatch_size):
                     mb_inds = b_inds[start:start + self.args.minibatch_size]
-                    _, newlogprob, entropy, newvalue = self.ACagent.get_action_and_value(b_obs[mb_inds],b_actions[mb_inds])
+                    _, newlogprob, entropy, newvalue = self.ACagent.get_action_and_value(b_obs[mb_inds],
+                                                                                         b_actions[mb_inds])
                     logratio = newlogprob - b_logprobs[mb_inds]
                     ratio = logratio.exp()
                     with torch.no_grad():
@@ -191,7 +208,7 @@ class PPO(nn.Module):
                         clipfracs += [((ratio - 1.0).abs() > self.args.clip_coef).float().mean().item()]
                     mb_advantages = b_advantages[mb_inds]
                     if self.args.norm_adv: mb_advantages = (mb_advantages - mb_advantages.mean()) / (
-                                mb_advantages.std() + 1e-8)
+                            mb_advantages.std() + 1e-8)
                     # Policy loss
                     pg_loss1 = -mb_advantages * ratio
                     pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - self.args.clip_coef, 1 + self.args.clip_coef)
@@ -217,7 +234,9 @@ class PPO(nn.Module):
                            + self.args.vf_coef * v_loss
                     self.ac_optimizer.zero_grad()
                     loss.backward()
-                    nn.utils.clip_grad_norm_(itertools.chain(self.ACagent.feature.parameters(),self.ACagent.actor.parameters(),self.ACagent.critic.parameters()), 0.5)
+                    nn.utils.clip_grad_norm_(
+                        itertools.chain(self.ACagent.feature.parameters(), self.ACagent.actor.parameters(),
+                                        self.ACagent.critic.parameters()), 0.5)
                     self.ac_optimizer.step()
 
                 if self.args.target_kl is not None:
@@ -239,7 +258,8 @@ class PPO(nn.Module):
             writer.add_scalar("losses/explained_variance", explained_var, global_step)
             writer.add_scalar("charts/step_per_second", int(global_step / (time.time() - start_time)), global_step)
         # save
-        torch.save(self.state_dict(), os.path.join(f'ppo-exp/{self.args.run_name}',f'{self.__str__()}_epi{len(self.episode_returns)}_rtn{np.mean(self.episode_returns[-self.args.save_freq:]):.2f}.pth'))
+        torch.save(self.state_dict(), os.path.join(f'ppo-exp/{self.args.run_name}',
+                                                   f'{self.__str__()}_epi{len(self.episode_returns)}_rtn{np.mean(self.episode_returns[-self.args.save_freq:]):.2f}.pth'))
         # pickle.dump(self.intrinsic_rewards,open(f'ppo-exp/{self.args.run_name}/intrinsic_rewards.pkl','wb'))
         self.env.close()
         writer.close()
@@ -256,9 +276,8 @@ class GAIfOTrainer:
 
     def load(self):
         ckpts = glob(f'ppo-exp/{self.args.run_name}/*.pth')
-        assert len(ckpts) > 0,'No pretrained model found'
+        assert len(ckpts) > 0, 'No pretrained model found'
         self.PPOagent.load_state_dict(torch.load(ckpts[-1]))
-
 
 
 if __name__ == '__main__':
@@ -289,15 +308,11 @@ if __name__ == '__main__':
     parser.add_argument("--intrinsic_coef", type=float, default=1.0)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
-    args.run_name = f'{args.algo}_{args.env_name}_seed{args.seed}_lmbda{args.gae_lambda}_{args.intrinsic_coef}'
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    env = make_env(args.env_name, args.seed, args.record_video, args.run_name, args.clipframe)
-    setseed(args.seed)
+    args.run_name = f'{args.algo}_{-args.intrinsic_coef}_lmbda{args.gae_lambda}_{args.env_name}_seed{args.seed}'
 
     if not args.src_root:
-        args.src_root = f'dataset/{args.game}'
+        args.src_root = f'dataset/{args.env_name[:-14]}'
     src = glob(os.path.join(args.src_root, '*.pkl'))
 
-    trainer = GAIfOTrainer(env)
+    trainer = GAIfOTrainer(args)
     trainer.train()

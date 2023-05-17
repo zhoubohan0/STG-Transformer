@@ -2,27 +2,29 @@ import argparse
 import os
 import pickle
 import random
+import sys
+from glob import glob
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import torch
-from torch import nn
 from sklearn.manifold import TSNE
-from glob import glob
-from network import STGTransformer
-from config import STGConfig
+from torch import nn
 
-plt.rcParams['text.usetex'] = True
+sys.path.append(os.path.split(os.path.abspath(os.path.dirname(__file__)))[0])
+
+
+# from network import *
+# plt.rcParams['text.usetex'] = True
 
 
 class Cal_CAM(nn.Module):
-    def __init__(self, model_file, target_layer="0"):
+    def __init__(self, model, target_layer="0"):
         super(Cal_CAM, self).__init__()
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.model = STGTransformer(STGConfig()).to(self.device)
-        self.model.load(model_file)
+        self.model = model.to(self.device)
         self.encoder = self.model.encoder._modules['feature']
         # 要求梯度的层
         self.feature_layer = target_layer
@@ -81,7 +83,7 @@ class Cal_CAM(nn.Module):
         # plt.savefig("cam.jpg")
 
         # 将cam区域放大到输入图片大小
-        cam_ = cv2.resize(cam, (160, 210))
+        cam_ = cv2.resize(cam, (84, 84))
         # 归一化
         cam_ = cam_ - np.min(cam_)
         cam_ = cam_ / np.max(cam_)
@@ -91,8 +93,8 @@ class Cal_CAM(nn.Module):
         fig = plt.figure(dpi=300)
         plt.imshow(img)
         # axes[0].set_title('Saliency Map (SM)')
-        plt.gca().set_xticks(np.arange(0, 161, 40))
-        plt.gca().set_yticks(np.arange(0, 211, 30))
+        plt.gca().set_xticks(np.arange(0, 85, 15))
+        plt.gca().set_yticks(np.arange(0, 85, 21))
         if filepath[-1] == 'l': plt.colorbar()
         plt.tight_layout()
         plt.savefig(filepath + '.pdf', bbox_inches='tight', dpi=300)
@@ -132,12 +134,13 @@ class Cal_CAM(nn.Module):
         return self.show_img(cam_, vis_img, save)
 
 
-def visualize_cnn(model_file, sampled_states, target, save):
+def visualize_cnn(model, sampled_states, target, save):
     if not os.path.exists(os.path.split(save)[0]):
         os.mkdir(os.path.split(save)[0])
-    cal_cam = Cal_CAM(model_file, target_layer=target)
+    cal_cam = Cal_CAM(model, target_layer=target)
     state, next_state = sampled_states / 255.
-    cal_cam.forward(state.reshape(1, *state.shape), next_state.reshape(1, *state.shape), (state*255).astype(np.uint8), save)
+    cal_cam.forward(state.reshape(1, *state.shape), next_state.reshape(1, *state.shape),
+                    (state * 255).astype(np.uint8).transpose(1, 2, 0)[..., :-1],save)
 
 
 def visualize_embedding_cmp(csvs):
@@ -155,16 +158,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", type=str, default='Breakout')
     parser.add_argument("--algo", type=str, default='STG')
+    parser.add_argument("--model", type=str, default='')
     args = parser.parse_args()
-
-    sampled_traj = pickle.load(open(random.choice(glob(f'dataset/{args.env}/*.pkl')),'rb'))['states']
-    i = random.choice(range(1,sampled_traj.shape[0]-1))
-    sampled_states = sampled_traj[i:i+2]
+    if not args.model:
+        args.model = f'./pretrain-exp/{args.env}_{args.algo}/{args.env}_{args.algo}.pt'
+    sampled_traj = pickle.load(open(random.choice(glob(f'dataset/{args.env}/*.pkl')), 'rb'))['states']
+    i = random.choice(range(1, sampled_traj.shape[0] - 1))
+    sampled_states = sampled_traj[i:i + 2]
     for layer in ['0', '2', '4']:
         visualize_cnn(
-            model_file=glob(f'pretrain-exp/{args.env}_{args.algo}/*.pth')[-1],
+            model=torch.load(args.model),
             sampled_states=sampled_states,
             target=layer,
             save=f'vis-res/{args.env}_{args.algo}_{layer}'
         )
-

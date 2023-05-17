@@ -1,11 +1,14 @@
-import random
 import os
+import random
+
 import numpy as np
-import torch, pickle
+import pickle
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import Logger
-from networks import AtariCNN,TDR
+
+from util import Logger
+from .networks import AtariCNN, TDR
 
 
 class ELE(nn.Module):
@@ -13,11 +16,11 @@ class ELE(nn.Module):
         super().__init__()
         self.config = config
         # input embedding
-        self.encoder = AtariCNN(4,config.n_embd)
+        self.encoder = AtariCNN(4, config.n_embd)
         # final projection
         self.out = nn.Linear(config.n_embd, config.n_embd)
         # temporal distance regressor
-        self.tdr = TDR(config.n_embd, config.n_embd,1)
+        self.tdr = TDR(config.n_embd, config.n_embd, 1)
         # optimizer
         self.optimizer = self.configure_optimizers()
         # initialization
@@ -80,10 +83,11 @@ class ELE(nn.Module):
         # calculate temporal distance
         idx1 = np.arange(self.config.block_size)
         idx2 = np.random.permutation(idx1)
-        timesteps = timesteps.repeat(block_size).reshape(-1,block_size)
-        idx1,idx2,timesteps = torch.LongTensor(idx1).to(self.config.device),torch.LongTensor(idx2).to(self.config.device),torch.LongTensor(timesteps).to(self.config.device)
+        timesteps = timesteps.repeat(block_size).reshape(-1, block_size)
+        idx1, idx2, timesteps = torch.LongTensor(idx1).to(self.config.device), torch.LongTensor(idx2).to(
+            self.config.device), torch.LongTensor(timesteps).to(self.config.device)
         time_dis = self.tdr.symlog(idx1 + timesteps, idx2 + timesteps)
-        time_pred = self.tdr(input_embedding[:,idx1,:],input_embedding[:,idx2,:])
+        time_pred = self.tdr(input_embedding[:, idx1, :], input_embedding[:, idx2, :])
         tdr_loss = F.mse_loss(time_pred.view(time_dis.shape), time_dis)
         # total loss
         loss = self.config.tdr_coff * tdr_loss
@@ -92,30 +96,33 @@ class ELE(nn.Module):
         self.optimizer.step()
         return tdr_loss.item()
 
-    def trainELE(self,src):
+    def trainELE(self, src, game):
         root = './pretrain-exp'
         if not os.path.exists(root):
             os.mkdir(root)
-        save_dir = os.path.join(root, f"{self.config.game}_ELE")
-        exp_logger = Logger(save_dir, f'trainele.csv',fieldnames=['update', 'TDR_loss'])
+        save_dir = os.path.join(root, f"{game}_ELE")
+        exp_logger = Logger(save_dir, f'trainele.csv', fieldnames=['update', 'TDR_loss'])
         self.train()
         src_len = len(src)
         for i_epoch in range(self.config.n_epoch):
             random.shuffle(src)
             for i_src, d in enumerate(src):
                 states = pickle.load(open(os.path.join('.', d), 'rb'))['states']
-                step = np.random.choice(states.shape[0] - self.config.block_size, size=self.config.batch_size, replace=False)
-                batch = torch.Tensor(states[np.array([list(range(id, id + self.config.block_size)) for id in step])]) / 255.0  # (config.batch_size, config.block_size+1, 4, 84, 84)
+                step = np.random.choice(states.shape[0] - self.config.block_size, size=self.config.batch_size,
+                                        replace=False)
+                batch = torch.Tensor(states[np.array([list(range(id, id + self.config.block_size)) for id in
+                                                      step])]) / 255.0  # (config.batch_size, config.block_size+1, 4, 84, 84)
                 tdr_loss = self.update(batch.to(self.config.device), step)
                 num = i_epoch * src_len + i_src + 1
                 exp_logger.update(fieldvalues=[num, tdr_loss])
                 if num % 5000 == 0:
-                    torch.save(self, f'{save_dir}/ELE_{num}.pt')
+                    torch.save(self.state_dict(), f'{save_dir}/{game}_ELE_{num}.pth')
             print(f'update:{num:05d} | TDR_loss:{tdr_loss:.6f}')
         num_update = src_len * self.config.n_epoch
-        torch.save(self, f'{save_dir}/ELE_{num_update}.pt')
+        torch.save(self.state_dict(), f'{save_dir}/{game}_ELE_{num_update}.pth')
+        torch.save(self, f'{save_dir}/{game}_ELE_{num_update}.pt')
 
-    def cal_intrinsic_s2e(self,states_ls,steps_ls):
+    def cal_intrinsic_s2e(self, states_ls, steps_ls):
         '''
         states:(block_size+1,4,84,84)
         step:(1,)
@@ -127,7 +134,8 @@ class ELE(nn.Module):
                 states = torch.stack(states_ls[i])
                 with torch.no_grad():
                     embeddings = self.encoder(states).unsqueeze(0)  # (1, block_size+1, n_embd)
-                    cur_embedding,next_embedding = embeddings[:, :-1, :],embeddings[:, 1:, :] # (1, block_size+1, n_embd)
-                    intrinsic = self.tdr.symexp(self.tdr(cur_embedding,next_embedding).view(-1))
+                    cur_embedding, next_embedding = embeddings[:, :-1, :], embeddings[:, 1:,
+                                                                           :]  # (1, block_size+1, n_embd)
+                    intrinsic = self.tdr.symexp(self.tdr(cur_embedding, next_embedding).view(-1))
                     intrinsic = torch.cat((intrinsic, intrinsic), dim=0)
-            return {'TD':intrinsic}
+            return {'TD': intrinsic}

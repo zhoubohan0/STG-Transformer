@@ -1,17 +1,16 @@
 import os
-import pickle
 import time
-import random
-import numpy as np
-import gym
 import warnings
-import torch
-from torch import nn, optim
 from glob import glob
-from torch.distributions import Categorical
+
+import numpy as np
+import torch
 from tensorboardX import SummaryWriter
+from torch import nn, optim
+from torch.distributions import Categorical
+
 from args import ppo_parser
-from utils import make_env,setseed,layer_init
+from util import make_env, setseed, layer_init
 
 warnings.filterwarnings('ignore')
 
@@ -58,7 +57,7 @@ class PPO(nn.Module):
     def __str__(self):
         return 'PPO'
 
-    def train_ppo(self,reward_model):
+    def train_ppo(self, reward_model):
         setseed(self.args.seed)
         writer = SummaryWriter(f"ppo-exp/{self.args.run_name}")
         writer.add_text(
@@ -104,15 +103,18 @@ class PPO(nn.Module):
                         self.episode_returns.append(ep_return)
                         n_epi = len(self.episode_returns)
                         if n_epi % self.args.log_freq == 0:
-                            print(f"episode:{n_epi} | global_step:{global_step} | episodic_return:{np.mean(self.episode_returns[-self.args.log_freq:]):.2f}")
+                            print(
+                                f"episode:{n_epi} | global_step:{global_step} | episodic_return:{np.mean(self.episode_returns[-self.args.log_freq:]):.2f}")
                         writer.add_scalar("charts/episodic_return", ep_return, global_step)
                         writer.add_scalar("charts/episodic_length", ep_length, global_step)
                         # save
                         if n_epi % self.args.save_freq == 0:
-                            torch.save(self.state_dict(), os.path.join(f'ppo-exp/{self.args.run_name}',f'{str(self)}_epi{n_epi}_rtn{np.mean(self.episode_returns[-self.args.save_freq:]):.2f}.pth'))
+                            torch.save(self.state_dict(), os.path.join(f'ppo-exp/{self.args.run_name}',
+                                                                       f'{str(self)}_epi{n_epi}_rtn{np.mean(self.episode_returns[-self.args.save_freq:]):.2f}.pth'))
                         # reset
                         ep_step = 0
-                        ss_states[-1].append(obs), ss_states.append([]), ep_steps.append(torch.LongTensor([ep_step]).view(1, 1, 1).to(self.args.device))
+                        ss_states[-1].append(obs), ss_states.append([]), ep_steps.append(
+                            torch.LongTensor([ep_step]).view(1, 1, 1).to(self.args.device))
                         obs, done = torch.Tensor(self.env.reset()).to(self.args.device), False
                         break
             ss_states[-1].append(obs)
@@ -139,7 +141,8 @@ class PPO(nn.Module):
                         nextnonterminal = 1.0 - dones[t + 1]
                         nextvalues = values[t + 1]
                     delta = rewards[t] + self.args.gamma * nextvalues * nextnonterminal - values[t]
-                    advantages[t] = lastgaelam = delta + self.args.gamma * self.args.gae_lambda * nextnonterminal * lastgaelam
+                    advantages[
+                        t] = lastgaelam = delta + self.args.gamma * self.args.gae_lambda * nextnonterminal * lastgaelam
                 returns = advantages + values
             b_obs = observations.reshape(-1, *self.obs_shape)
             b_logprobs = logprobs.reshape(-1)
@@ -214,7 +217,8 @@ class PPO(nn.Module):
             writer.add_scalar("losses/explained_variance", explained_var, global_step)
             writer.add_scalar("charts/step_per_second", int(global_step / (time.time() - start_time)), global_step)
         # save checkpoints
-        torch.save(self.state_dict(), os.path.join(f'ppo-exp/{self.args.run_name}',f'{self.__str__()}_epi{len(self.episode_returns)}_rtn{np.mean(self.episode_returns[-self.args.save_freq:]):.2f}.pth'))
+        torch.save(self.state_dict(), os.path.join(f'ppo-exp/{self.args.run_name}',
+                                                   f'{self.__str__()}_epi{len(self.episode_returns)}_rtn{np.mean(self.episode_returns[-self.args.save_freq:]):.2f}.pth'))
         self.env.close()
         writer.close()
 
@@ -222,10 +226,10 @@ class PPO(nn.Module):
 class STGTrainer:
     def __init__(self, args, ckpt=None):
         self.PPOagent = PPO(args).to(args.device)
-        if ckpt is not None: 
+        if ckpt is not None:
             self.load(ckpt)
 
-    def train(self,reward_model):
+    def train(self, reward_model):
         self.PPOagent.train_ppo(reward_model)
 
     def load(self, ckpt=''):
@@ -240,13 +244,15 @@ if __name__ == '__main__':
     args = ppo_parser()
 
     # load reward model
-    if args.algo in ['ELE', 'ele','STG-', 'stg-']:
+    if args.algo in ['STG', 'stg', 'STG-', 'stg-']:
         from network import STGTransformer
         from config import STGConfig
+
         reward_model = STGTransformer(STGConfig()).to(args.device)
     if args.algo in ['ELE', 'ele']:
         from network import ELE
         from config import ELEConfig
+
         reward_model = ELE(ELEConfig()).to(args.device)
     if os.path.exists(args.pretrained_model):
         reward_model.load(args.pretrained_model)

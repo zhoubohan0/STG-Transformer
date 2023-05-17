@@ -1,8 +1,10 @@
 import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import spectral_norm
+
 
 # 1D Attention for TDR
 class Self_Attn1D(nn.Module):
@@ -10,8 +12,8 @@ class Self_Attn1D(nn.Module):
         super(Self_Attn1D, self).__init__()
         self.chanel_in = in_dim
 
-        self.query_conv = nn.Conv1d(in_channels=in_dim, out_channels=in_dim // k, kernel_size=1,)
-        self.key_conv = nn.Conv1d(in_channels=in_dim, out_channels=in_dim // k, kernel_size=1,)
+        self.query_conv = nn.Conv1d(in_channels=in_dim, out_channels=in_dim // k, kernel_size=1, )
+        self.key_conv = nn.Conv1d(in_channels=in_dim, out_channels=in_dim // k, kernel_size=1, )
         self.value_conv = nn.Conv1d(in_channels=in_dim, out_channels=in_dim, kernel_size=1)
         self.gamma = nn.Parameter(torch.zeros(1))
 
@@ -45,8 +47,7 @@ class Self_Attn1D(nn.Module):
         out = self.gamma * out + x
         out = out.squeeze(2)
 
-        return out#, attention
-
+        return out  # , attention
 
 
 # Temporal Distance Regression
@@ -56,9 +57,9 @@ class TDR(nn.Module):
         self.att = Self_Attn1D(in_dim)
         self.net = nn.Sequential(
             nn.Linear(in_dim, emb_dim), nn.ReLU(),
-            nn.Linear(emb_dim, emb_dim//2), nn.ReLU(),
-            nn.Linear(emb_dim//2, emb_dim//4), nn.ReLU(),
-            nn.Linear(emb_dim//4, out_dim)
+            nn.Linear(emb_dim, emb_dim // 2), nn.ReLU(),
+            nn.Linear(emb_dim // 2, emb_dim // 4), nn.ReLU(),
+            nn.Linear(emb_dim // 4, out_dim)
         )
 
     def symlog(self, i, j):
@@ -68,8 +69,8 @@ class TDR(nn.Module):
     def symexp(self, x):
         return x.sign() * (x.abs().exp() - 1)
 
-    def forward(self, x,y):
-        mix = self.att((y-x).view(-1,x.shape[-1])).reshape(x.shape)#torch.cat((x,y),-1)
+    def forward(self, x, y):
+        mix = self.att((y - x).view(-1, x.shape[-1])).reshape(x.shape)  # torch.cat((x,y),-1)
         return self.net(mix)
 
 
@@ -127,6 +128,7 @@ class ResBlock(nn.Module):
 
 class ResidualCNN(nn.Module):
     '''CNN for Atari (84,84) image'''
+
     def __init__(self, in_dim, emb_dim):
         super().__init__()
         self.conv1 = nn.Sequential(
@@ -176,6 +178,7 @@ class ResidualCNN(nn.Module):
         feat3 = feat3 + self.residual3(feat3)
         x = self.fc(feat3)
         return x
+
 
 # Causal Self-Attention
 class CausalSelfAttention(nn.Module):
@@ -244,6 +247,7 @@ class CSABlock(nn.Module):  # CausalSelfAttention Block
         x = x + self.mlp(self.ln2(x))
         return x
 
+
 # Discriminator
 class Discriminator(nn.Module):
     def __init__(self, config):
@@ -261,12 +265,13 @@ class Discriminator(nn.Module):
             nn.GELU(),
             spectral_norm(nn.Linear(32, 1)),
         )
-        self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=config.learning_rate)#, betas=config.betas
+        self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=config.learning_rate)  # , betas=config.betas
         self.clip_value = 0.01
+
     def forward(self, pred, true):
         return self.net(torch.cat((pred, true), -1))
 
-    def update(self, x, pred, true,d_coff):
+    def update(self, x, pred, true, d_coff):
         D_loss = (self.forward(x, pred) - self.forward(x, true)).mean()
         loss = d_coff * D_loss
         self.optimizer.zero_grad()

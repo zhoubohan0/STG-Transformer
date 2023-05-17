@@ -19,9 +19,12 @@ class ELEConfig:
     n_epoch = 200
     batch_size = 16
     device = "cuda"
+
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
+
+
 class STGConfig:
     """ base GPT config, params common to all GPT versions """
     # model hyperparameters
@@ -46,6 +49,7 @@ class STGConfig:
     n_epoch = 200
     batch_size = 16
     device = "cuda"
+
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)

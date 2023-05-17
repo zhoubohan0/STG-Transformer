@@ -1,8 +1,10 @@
-import argparse,torch
+import argparse
+import torch
+
 
 def pretrain_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--algo", type=str, default='STG',help="choose from [STG,STG-,ELE]")
+    parser.add_argument("--algo", type=str, default='STG', help="choose from [STG,STG-,ELE]")
     parser.add_argument("--game", type=str, default='Breakout')
     parser.add_argument("--seed", type=int, default=0)
 
@@ -21,4 +23,3 @@ def pretrain_parser():
     if args.algo in ['ELE', 'ele']:
         args.l2_coff = args.g_coff = args.d_coff = 0
     return args
-

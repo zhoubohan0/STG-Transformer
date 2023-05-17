@@ -1,14 +1,13 @@
-import pickle
-import time
 import os
+import pickle
+import random
+import time
 from collections import defaultdict
 from csv import DictWriter
-import random
 
 import cv2
 import numpy as np
 import torch
-from torch import nn
 
 
 class Logger:
@@ -99,14 +98,14 @@ class BatchCollecter:
             'return': self.ep_return,
             'states': self.states,
             'actions': self.actions,
-             'rewards': self.rewards
-            },
+            'rewards': self.rewards
+        },
             open(os.path.join(root, f'epi{n_ep}_len{self.ep_length}_rtn{int(self.ep_return)}.pkl'), 'wb')
         )
 
 
-def layer_init(layer, bias_const=0.0):
-    nn.init.kaiming_normal_(layer.weight)
+def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
+    torch.nn.init.orthogonal_(layer.weight, std)
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
 
@@ -132,13 +131,8 @@ def checkdata(imgs, s2e=None, winname='atari'):  # imgs是(n,w,h,c)的np.uint8
     cv2.namedWindow(winname, 0)
     cv2.resizeWindow(winname, 600, 600)
     if s2e is None:
-        s2e = (0,imgs.shape[0])
+        s2e = (0, imgs.shape[0])
     for i in range(*s2e):
-        cv2.imshow(winname,imgs[i])
+        cv2.imshow(winname, imgs[i])
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-
-
-
-
-

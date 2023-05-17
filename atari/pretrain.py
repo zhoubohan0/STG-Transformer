@@ -1,10 +1,10 @@
 import os
 from glob import glob
-from args import pretrain_parser
-from network import ELE,STGTransformer
-from config import ELEConfig,STGConfig
-from utils import setseed
 
+from args import pretrain_parser
+from config import ELEConfig, STGConfig
+from network import ELE, STGTransformer
+from util import setseed
 
 if __name__ == '__main__':
     args = pretrain_parser()
@@ -14,13 +14,13 @@ if __name__ == '__main__':
 
     src = glob(os.path.join(args.src_root, '*.pkl'))
 
-    if args.algo in ['STG', 'stg','STG-', 'stg-']:
-        stgconfig = STGConfig(l2_coff=args.l2_coff,d_coff=args.d_coff, g_coff=args.g_coff, tdr_coff=args.tdr_coff,device=device)
+    if args.algo in ['STG', 'stg', 'STG-', 'stg-']:
+        stgconfig = STGConfig(l2_coff=args.l2_coff, d_coff=args.d_coff, g_coff=args.g_coff, tdr_coff=args.tdr_coff,
+                              device=device)
         model = STGTransformer(stgconfig).to(device)
-        model.trainSTG(src)
+        model.trainSTG(src, game)
 
     if args.algo in ['ELE', 'ele']:
-        eleconfig = ELEConfig(tdr_coff=args.tdr_coff,device=device)
+        eleconfig = ELEConfig(tdr_coff=args.tdr_coff, device=device)
         model = ELE(eleconfig).to(device)
-        model.trainELE(src)
-
+        model.trainELE(src, game)

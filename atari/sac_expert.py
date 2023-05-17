@@ -1,20 +1,22 @@
-import argparse
-import copy, pickle
-import glob
+import copy
 import os
 import random
 import time
+from glob import glob
+
 import cv2
-import gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.distributions.categorical import Categorical
 from tensorboardX import SummaryWriter
-from utils import make_env,ReplayBuffer, BatchCollecter, setseed, layer_init
+from torch.distributions.categorical import Categorical
+
 from args import sac_parser
+from util import make_env, ReplayBuffer, BatchCollecter, setseed, layer_init
+
+
 class SoftQNetwork(nn.Module):
     def __init__(self, n_action, obs_shape):
         super().__init__()
@@ -34,7 +36,7 @@ class SoftQNetwork(nn.Module):
         self.fc_q = layer_init(nn.Linear(512, n_action))
 
     def forward(self, x):
-        x = F.relu(self.conv(x / 255.))
+        x = F.relu(self.conv(x))
         x = F.relu(self.fc1(x))
         q_vals = self.fc_q(x)
         return q_vals
@@ -66,7 +68,7 @@ class Actor(nn.Module):
 
     def get_action(self, x):
         if x.ndim < 4: x = x.unsqueeze(0)
-        logits = self.forward(x / 255.)
+        logits = self.forward(x)
         policy_dist = Categorical(logits=logits)
         action = policy_dist.sample()
         # Action probabilities for calculating the adapted soft-Q loss
@@ -81,7 +83,7 @@ class SAC(nn.Module):
         self.args = args
         self.env = make_env(args.env_id, args.seed, args.capture_video, args.run_name, args.clipframe)
         self.n_action, self.obs_shape = self.env.action_space.n, (4, 84, 84)
-        # 网络组件
+        # components
         self.actor = Actor(self.n_action, self.obs_shape)
         self.qf1 = SoftQNetwork(self.n_action, self.obs_shape)
         self.qf2 = SoftQNetwork(self.n_action, self.obs_shape)
@@ -105,12 +107,12 @@ class SAC(nn.Module):
 
     def train_sac(self):
         setseed(self.args.seed)
-        writer = SummaryWriter(os.path.join(root,"sac-exp",self.args.run_name))
+        writer = SummaryWriter(os.path.join(root, "sac-exp", self.args.run_name))
         writer.add_text(
             "hyperparameters",
             "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(self.args).items()])),
         )
-        # 开始训练
+        # begin to train
         start_time, obs = time.time(), self.env.reset()
         for global_step in range(self.args.total_timesteps):
             if global_step < self.args.learning_starts:
@@ -120,10 +122,9 @@ class SAC(nn.Module):
                 actions = self.actor.get_action(torch.Tensor(obs).to(self.args.device))[0].detach().cpu().numpy()
             next_obs, rewards, dones, info = self.env.step(actions)
             self.replayBuffer.add(obs, actions, rewards, next_obs, dones)
-            obs = next_obs  # 步进
+            obs = next_obs
             for each_key in info:
                 if "episode" in each_key:
-                    # 记录轨迹长度和回报
                     ep_return, ep_length = info['episode']['r'], info["episode"]["l"]
                     self.episode_returns.append(ep_return)
                     n_epi = len(self.episode_returns)
@@ -131,17 +132,16 @@ class SAC(nn.Module):
                         print(f"episode:{n_epi} | global_step:{global_step} | episodic_return:{ep_return}")
                     writer.add_scalar("charts/episodic_return", ep_return, global_step)
                     writer.add_scalar("charts/episodic_length", ep_length, global_step)
-                    # 保存参数
                     if n_epi % self.args.save_freq == 0:
-                        torch.save(self.state_dict(), os.path.join(root,'sac-exp',self.args.run_name,f'{str(self)}_epi{n_epi}_rtn{np.mean(self.episode_returns[-self.args.save_freq:]):.2f}.pth'))
-                    # 重置环境
+                        torch.save(self.state_dict(), os.path.join(root, 'sac-exp', self.args.run_name,
+                                                                   f'{str(self)}_epi{n_epi}_rtn{np.mean(self.episode_returns[-self.args.save_freq:]):.2f}.pth'))
                     obs = self.env.reset()
                     break
-            # 更新
             if global_step > self.args.learning_starts:
                 if global_step % self.args.update_frequency == 0:
                     b_obs, b_action, b_reward, b_obs_, b_done = self.replayBuffer.sample()
-                    b_obs, b_action, b_reward, b_obs_, b_done = b_obs.to(self.args.device), b_action.to(self.args.device), b_reward.to(
+                    b_obs, b_action, b_reward, b_obs_, b_done = b_obs.to(self.args.device), b_action.to(
+                        self.args.device), b_reward.to(
                         self.args.device), b_obs_.to(self.args.device), b_done.to(self.args.device)
                     with torch.no_grad():
                         _, next_state_log_pi, next_state_action_probs = self.actor.get_action(b_obs_)
@@ -152,7 +152,8 @@ class SAC(nn.Module):
                                 torch.min(qf1_next_target, qf2_next_target) - self.alpha * next_state_log_pi)
                         # adapt Q-target for discrete Q-function
                         min_qf_next_target = min_qf_next_target.sum(dim=1)
-                        next_q_value = b_reward.flatten() + (1 - b_done.flatten()) * self.args.gamma * (min_qf_next_target)
+                        next_q_value = b_reward.flatten() + (1 - b_done.flatten()) * self.args.gamma * (
+                            min_qf_next_target)
                     # use Q-values only for the taken actions
                     qf1_values = self.qf1(b_obs)
                     qf2_values = self.qf2(b_obs)
@@ -182,7 +183,7 @@ class SAC(nn.Module):
                     if self.args.autotune:
                         # re-use action probabilities for temperature loss
                         alpha_loss = (action_probs.detach() * (
-                                    -self.log_alpha * (log_pi + self.target_entropy).detach())).mean()
+                                -self.log_alpha * (log_pi + self.target_entropy).detach())).mean()
 
                         self.a_optimizer.zero_grad()
                         alpha_loss.backward()
@@ -194,7 +195,7 @@ class SAC(nn.Module):
                         target_param.data.copy_(self.args.tau * param.data + (1 - self.args.tau) * target_param.data)
                     for param, target_param in zip(self.qf2.parameters(), self.qf2_target.parameters()):
                         target_param.data.copy_(self.args.tau * param.data + (1 - self.args.tau) * target_param.data)
-                # 记录
+                # record
                 if global_step % self.args.writer_log_freq == 0:
                     writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)
                     writer.add_scalar("losses/qf2_values", qf2_a_values.mean().item(), global_step)
@@ -204,10 +205,12 @@ class SAC(nn.Module):
                     writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
                     writer.add_scalar("losses/alpha", self.alpha, global_step)
                     # print("SPS:", int(global_step / (time.time() - start_time)))
-                    writer.add_scalar("charts/step_per_second", int(global_step / (time.time() - start_time)),global_step)
+                    writer.add_scalar("charts/step_per_second", int(global_step / (time.time() - start_time)),
+                                      global_step)
                     if self.args.autotune:
                         writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
-        torch.save(self.state_dict(), os.path.join(root,'sac-exp',self.args.run_name,f'{str(self)}_epi{len(self.episode_returns)}_rtn{np.mean(self.episode_returns[-self.args.save_freq:]):.2f}.pth'))
+        torch.save(self.state_dict(), os.path.join(root, 'sac-exp', self.args.run_name,
+                                                   f'{str(self)}_epi{len(self.episode_returns)}_rtn{np.mean(self.episode_returns[-self.args.save_freq:]):.2f}.pth'))
         self.env.close()
         writer.close()
 
@@ -221,7 +224,7 @@ class SACTrainer:
         self.SACagent.train_sac()
 
     def load(self):
-        ckpts = glob.glob(os.path.join(root,f'checkpoints/{self.args.run_name}/*.pth',))
+        ckpts = glob(os.path.join(root, f'sac-exp/{self.args.run_name}/*.pth', ))
         assert len(ckpts) > 0, 'No pretrained model found'
         self.SACagent.load_state_dict(torch.load(ckpts[-1]))
 
@@ -244,9 +247,13 @@ class SACTrainer:
 class SACTester:
     def __init__(self, args):
         self.SACagent = SAC(args).to(args.device)
+        self.env = self.SACagent.env
+        self.args = args
 
     def load(self, ckpt):
-        self.SACagent.load_state_dict(torch.load(ckpt))
+        state_dict = self.SACagent.state_dict()
+        state_dict.update(torch.load(ckpt))
+        self.SACagent.load_state_dict(state_dict)
 
     def test_one_episode(self):
         state = torch.Tensor(self.env.reset()).to(self.args.device)
@@ -262,19 +269,22 @@ class SACTester:
             state = torch.Tensor(next_state).to(self.args.device)
             time.sleep(0.01)
 
-    def collect(self, ckpts, save_dir, num, resume=0):
+    def collect(self, ckpts, save_dir, num, resume=1):
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         for n_ep in range(resume, resume + num):
             setseed(n_ep)
-            self.load(random.choice(ckpts))
+            ckpt = random.choice(ckpts)
+            self.load(ckpt)
+            print(f'No.{n_ep} episode using {ckpt} begin to collect')
             # begin to collect
             collecter = BatchCollecter()
             state, terminal = self.env.reset(), False
             while not terminal:
-                action = self.SACagent.actor.get_action(torch.Tensor(state.astype(np.float32)).to(self.args.device))[0].detach().cpu().numpy()
+                action = self.SACagent.actor.get_action(torch.Tensor(state.astype(np.float32)).to(self.args.device))[
+                    0].detach().cpu().numpy()
                 next_state, reward, done, info = self.env.step(action)
-                store_state = (state.copy()*255).astype(np.uint8) if state.max() < 1 else state.copy()
+                store_state = (state.copy() * 255).astype(np.uint8) if state.max() < 1 else state.copy()
                 collecter.add(store_state, action, reward)
                 for each_key in info:
                     if "episode" in each_key:
@@ -304,7 +314,6 @@ if __name__ == "__main__":
         trainer = SACTrainer(args)
         trainer.train()
     if args.mode == 'test':
-        save_dir = os.path.join(root,f'{args.env_id[: -14]}')
+        save_dir = os.path.join(root, 'dataset', f'{args.env_id[: -14]}')
         tester = SACTester(args)
         tester.collect(args.test_checkpoints, save_dir, 50)
-

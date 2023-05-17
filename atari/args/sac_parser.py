@@ -1,4 +1,7 @@
-import argparse,os,torch
+import argparse
+import os
+import torch
+
 
 def sac_parser():
     parser = argparse.ArgumentParser()
@@ -15,7 +18,7 @@ def sac_parser():
     # Algorithm specific arguments
     parser.add_argument("--env_id", type=str, default="BreakoutNoFrameskip-v4",
                         help="the id of the environment")  # BeamRider
-    parser.add_argument("--clipframe", type=int, default=1, help='直接将原图resize/选取18:102高度再resize(84,84)')
+    parser.add_argument("--clipframe", type=int, default=0, help='1 means select 18:102 then resize(84,84)')
     parser.add_argument("--total_timesteps", type=int, default=int(5e6), help="total timesteps of the experiments")
     parser.add_argument("--buffer_size", type=int, default=int(1e6),
                         help="the replay memory buffer size")  # smaller than in original paper but evaluation is done only for 100k steps anyway
@@ -42,5 +45,3 @@ def sac_parser():
     args.run_name = f'SAC_{args.env_id}_seed{args.seed}'
 
     return args
-
-

@@ -1,15 +1,17 @@
+import os
 import random
 from glob import glob
-from sklearn.manifold import TSNE
+
 import matplotlib.pyplot as plt
-from matplotlib import pyplot
-import os
 import numpy as np
-import torch, pickle
+import pickle
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import Logger
-from networks import AtariCNN,TDR,CSABlock,Discriminator
+from sklearn.manifold import TSNE
+
+from util import Logger
+from .networks import AtariCNN, TDR, CSABlock, Discriminator
 
 
 class STGTransformer(nn.Module):
@@ -23,12 +25,12 @@ class STGTransformer(nn.Module):
         if stgmodel_path.endswith('.pt'):
             self = torch.load(stgmodel_path)
             print('load model from {}'.format(stgmodel_path))
-            
+
     def __init__(self, config):
         super().__init__()
         self.config = config
         # input embedding
-        self.encoder = AtariCNN(4,config.n_embd)
+        self.encoder = AtariCNN(4, config.n_embd)
         # positional encoding
         self.pos_emb = nn.Parameter(torch.zeros(1, config.block_size, config.n_embd))
         self.global_pos_emb = nn.Parameter(torch.zeros(1, config.max_timestep, config.n_embd))
@@ -42,7 +44,7 @@ class STGTransformer(nn.Module):
         # discriminator
         self.discriminator = Discriminator(config)
         # temporal distance regressor
-        self.tdr = TDR(config.n_embd, config.n_embd,1)
+        self.tdr = TDR(config.n_embd, config.n_embd, 1)
         # optimizer
         self.optimizer = self.configure_optimizers()
         # initialization
@@ -102,19 +104,24 @@ class STGTransformer(nn.Module):
         '''
         batch_size, block_size, c, w, h = data.shape
         embeddings = self.encoder(data.view(-1, c, w, h)).view(batch_size, block_size, self.config.n_embd)
-        input_embedding,target_embedding = embeddings[:, :-1, :],embeddings[:, 1:, :]
+        input_embedding, target_embedding = embeddings[:, :-1, :], embeddings[:, 1:, :]
         # positional encoding
         position_encodings = self.pos_emb[:, :input_embedding.shape[1], :]
         if timesteps is not None:
-            timesteps = timesteps.clip(max=self.config.max_timestep-1)
-            position_encodings = position_encodings + self.global_pos_emb.repeat_interleave(input_embedding.shape[0], dim=0).gather(1, timesteps.repeat_interleave(self.config.n_embd, dim=-1))
+            timesteps = timesteps.clip(max=self.config.max_timestep - 1)
+            position_encodings = position_encodings + self.global_pos_emb.repeat_interleave(input_embedding.shape[0],
+                                                                                            dim=0).gather(1,
+                                                                                                          timesteps.repeat_interleave(
+                                                                                                              self.config.n_embd,
+                                                                                                              dim=-1))
         # CSA
         x = self.ln_f(self.blocks(self.drop(input_embedding + position_encodings)))  # (bs,block_size,n_emb)
         # decode
         delta_embedding = self.out(x)
         expert_embedding = delta_embedding + input_embedding
         # update discriminator
-        D_loss = self.discriminator.update(input_embedding.detach(), expert_embedding.detach(), target_embedding.detach(),self.config.d_coff)
+        D_loss = self.discriminator.update(input_embedding.detach(), expert_embedding.detach(),
+                                           target_embedding.detach(), self.config.d_coff)
         # calculate adversarial loss and MSE loss
         L2_loss = F.mse_loss(delta_embedding, target_embedding - input_embedding)
         G_loss = -self.discriminator(input_embedding, expert_embedding).mean()
@@ -133,14 +140,15 @@ class STGTransformer(nn.Module):
         self.optimizer.step()
         return L2_loss.item(), G_loss.item(), D_loss.item(), tdr_loss.item(), loss.item()
 
-    def trainSTG(self,src):
+    def trainSTG(self, src, game):
         root = './pretrain-exp'
         if not os.path.exists(root):
             os.mkdir(root)
-        mode = 'STG' if self.config.tdr_coff!=0 else 'STG-'
-        save_dir = os.path.join(root,f"{self.config.game}_{mode}")
-        exp_logger = Logger(save_dir, f'trainstg.csv',fieldnames=['update','Total_loss', 'L2_loss', 'G_loss', 'D_loss','TDR_loss'])
-        self.train()  
+        mode = 'STG' if self.config.tdr_coff != 0 else 'STG-'
+        save_dir = os.path.join(root, f"{game}_{mode}")
+        exp_logger = Logger(save_dir, f'trainstg.csv',
+                            fieldnames=['update', 'Total_loss', 'L2_loss', 'G_loss', 'D_loss', 'TDR_loss'])
+        self.train()
         cnt = 0
         for i_epoch in range(self.config.n_epoch):
             random.shuffle(src)
@@ -149,39 +157,46 @@ class STGTransformer(nn.Module):
                 states = pickle.load(open(os.path.join('.', src[i_src]), 'rb'))['states']
                 minibatch = states.shape[0] // self.config.block_size
                 for i in range(minibatch):
-                    step = torch.randint(states.shape[0] - self.config.block_size, (self.config.batch_size, 1, 1),dtype=torch.long)  # (config.batch_size,1,1)
-                    batch = torch.Tensor(states[np.array([list(range(id, id + self.config.block_size + 1)) for id in step])]) / 255.0  # (config.batch_size, config.block_size+1, 4, 84, 84)
-                    L2_loss, G_loss, D_loss, tdr_loss, tot_loss = self.update(batch.to(self.config.device), step.to(self.config.device))
+                    step = torch.randint(states.shape[0] - self.config.block_size, (self.config.batch_size, 1, 1),
+                                         dtype=torch.long)  # (config.batch_size,1,1)
+                    batch = torch.Tensor(states[np.array([list(range(id, id + self.config.block_size + 1)) for id in
+                                                          step])]) / 255.0  # (config.batch_size, config.block_size+1, 4, 84, 84)
+                    L2_loss, G_loss, D_loss, tdr_loss, tot_loss = self.update(batch.to(self.config.device),
+                                                                              step.to(self.config.device))
                     exp_logger.update(fieldvalues=[cnt, tot_loss, L2_loss, G_loss, D_loss, tdr_loss])
                     cnt += 1
                     if cnt % 5000 == 0:
-                        torch.save(self.state_dict(), f'{save_dir}/{mode}_{cnt}.pth')
+                        torch.save(self.state_dict(), f'{save_dir}/{game}_{mode}_{cnt}.pth')
                     if cnt % 100 == 0:
-                        print(f'update:{cnt:05d} | loss:{tot_loss:.6f} | L2_loss:{L2_loss:.6f} | G_loss:{G_loss:.6f} | D_loss:{D_loss:.6f} | TDR_loss:{tdr_loss:.6f}')
-        torch.save(self.state_dict(), f'{save_dir}/{mode}_{cnt}.pth')
+                        print(
+                            f'update:{cnt:05d} | loss:{tot_loss:.6f} | L2_loss:{L2_loss:.6f} | G_loss:{G_loss:.6f} | D_loss:{D_loss:.6f} | TDR_loss:{tdr_loss:.6f}')
+        torch.save(self.state_dict(), f'{save_dir}/{game}_{mode}_{cnt}.pth')
+        torch.save(self, f'{save_dir}/{game}_{mode}.pt')
 
-    def compare_embedding(self,data_path,ckpt_paths,labels=['$STG$','$STG^{-}$']): 
-        colors=[np.array([60, 220, 215])/255.,np.array([205, 255, 120])/255.]
-        tsne = TSNE(n_components=2, init='pca', random_state=0, perplexity=30.0, n_iter=1000, verbose=0) 
+    def compare_embedding(self, data_path, ckpt_paths, labels=['$STG$', '$STG^{-}$']):
+        colors = [np.array([60, 220, 215]) / 255., np.array([205, 255, 120]) / 255.]
+        tsne = TSNE(n_components=2, init='pca', random_state=0, perplexity=30.0, n_iter=1000, verbose=0)
 
         self.eval()
         selected_traj = random.choice(glob(data_path))
         states = pickle.load(open(selected_traj, 'rb'))['states']
-        step = torch.arange(0, states.shape[0] - self.config.block_size - 1, self.config.block_size).long().view(-1, 1,1)
-        batch = torch.Tensor(states[np.array([list(range(id, id + self.config.block_size + 1)) for id in step])]) / 255.0
-        step,batch = step.to(self.config.device),batch.to(self.config.device)
+        step = torch.arange(0, states.shape[0] - self.config.block_size - 1, self.config.block_size).long().view(-1, 1,
+                                                                                                                 1)
+        batch = torch.Tensor(
+            states[np.array([list(range(id, id + self.config.block_size + 1)) for id in step])]) / 255.0
+        step, batch = step.to(self.config.device), batch.to(self.config.device)
         batch_size, block_size, c, w, h = batch.shape
-        for ckpt,label,color in zip(ckpt_paths,labels,colors):
+        for ckpt, label, color in zip(ckpt_paths, labels, colors):
             self.load(ckpt)
-            input_embedding = self.encoder(batch.view(-1, c, w, h)).view(batch_size, block_size,self.config.n_embd)
+            input_embedding = self.encoder(batch.view(-1, c, w, h)).view(batch_size, block_size, self.config.n_embd)
             vis_in = tsne.fit_transform(input_embedding.reshape(-1, self.config.n_embd).detach().cpu().numpy())
-            plt.scatter(vis_in[:, 0], vis_in[:, 1], c=color, marker='o', s=8, alpha=0.99,label=label)# 
+            plt.scatter(vis_in[:, 0], vis_in[:, 1], c=color, marker='o', s=8, alpha=0.99, label=label)  #
         plt.legend(loc='best')
-        plt.savefig(os.path.splitext(ckpt_paths[0])[0]+'.pdf')
+        plt.savefig(os.path.splitext(ckpt_paths[0])[0] + '.pdf')
         # plt.savefig(os.path.splitext(ckpt_paths[0])[0]+'.png')
         print()
 
-    def cal_intrinsic_s2e(self,states_ls,steps_ls):
+    def cal_intrinsic_s2e(self, states_ls, steps_ls):
         '''
         states:(block_size+1,4,84,84)
         step:(1,)
@@ -199,13 +214,16 @@ class STGTransformer(nn.Module):
                 with torch.no_grad():
                     embeddings = self.encoder(states)
                     embeddings = embeddings.unsqueeze(0)  # (1, block_size+1, n_embd)
-                    cur_embedding,next_embedding = embeddings[:, :-1, :],embeddings[:, 1:, :] # (1, block_size+1, n_embd)
+                    cur_embedding, next_embedding = embeddings[:, :-1, :], embeddings[:, 1:,
+                                                                           :]  # (1, block_size+1, n_embd)
                     # Positional Embedding
                     step = step.clip(max=self.config.max_timestep - 1)
                     position_encodings = self.pos_emb[:, :cur_embedding.shape[1], :]
-                    position_encodings = position_encodings + self.global_pos_emb.repeat_interleave(cur_embedding.shape[0], dim=0)\
+                    position_encodings = position_encodings + self.global_pos_emb.repeat_interleave(
+                        cur_embedding.shape[0], dim=0) \
                         .gather(1, step.repeat_interleave(self.config.n_embd, dim=-1))
-                    delta_embedding = self.out(self.ln_f(self.blocks(self.drop(cur_embedding + position_encodings))))  # (1, block_size, n_embd)
+                    delta_embedding = self.out(self.ln_f(
+                        self.blocks(self.drop(cur_embedding + position_encodings))))  # (1, block_size, n_embd)
                     pred_embedding = cur_embedding + delta_embedding
                     # Intrinsic Reward
                     '''
@@ -216,8 +234,10 @@ class STGTransformer(nn.Module):
                     4. D(cur_emb,pred_emb) - D(cur_emb,next_emb)    Adversary
                     '''
                     # pe = F.mse_loss(pred_embedding, next_embedding, reduction='none').sum(-1).view(-1)
-                    ds = (self.discriminator(cur_embedding, pred_embedding) - self.discriminator(cur_embedding, next_embedding)).view(-1)
-                    ps = self.tdr.symexp(self.tdr(cur_embedding,pred_embedding).view(-1))
+                    ds = (self.discriminator(cur_embedding, pred_embedding) - self.discriminator(cur_embedding,
+                                                                                                 next_embedding)).view(
+                        -1)
+                    ps = self.tdr.symexp(self.tdr(cur_embedding, pred_embedding).view(-1))
                     discrimination_score = torch.cat((discrimination_score, ds), dim=0)
                     progress_span = torch.cat((progress_span, ps), dim=0)
-            return {'ADV':discrimination_score,'TD':progress_span}
+            return {'ADV': discrimination_score, 'TD': progress_span}

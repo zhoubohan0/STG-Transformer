@@ -1,6 +1,6 @@
 # STG for Atari
 
-This repository shows how to apply STG in Atari environments. All subsequent commands will be in the current directory (where the `README.md` is located).
+This repository shows how to apply STG in Atari environments. All subsequent commands will be **in the current directory** (where the `README.md` is located).
 
 ## Requirements
 
@@ -38,7 +38,7 @@ There are two ways to form an expert dataset for STG/ELE offline pretraining in 
 3.  Run `process_data.py` to collect observation trajectories.
 
    ```python
-   python dataset/process_data.py --game $env$
+   python dataset/process_Dopamine.py --game $env$
    ```
 
 If you discover missing data or find it difficult to download the dataset, we provide another alternative to train an expert SAC agent to collect expert observations following instructions below: 
@@ -46,15 +46,15 @@ If you discover missing data or find it difficult to download the dataset, we pr
 1. Train an expert SAC agent from scratch.
 
    ```python
-   python dataset/sac_expert.py --env_id $env$NoFrameskip-v4 --mode train --buffer_size 1000000 --seed 0
+   python sac_expert.py --env_id $env$NoFrameskip-v4 --mode train --buffer_size 1000000 --seed 0
    ```
 
-   After training, the SAC checkpoints will be stored in  `dataset/sac-exp/SAC_$env$NoFrameskip-v4_seed0/SAC*.pth` and the training log will be recorded in `dataset/sac-exp/SAC_$env$NoFrameskip-v4_seed0/events.out.tfevents.*` .
+   After training, the SAC checkpoints will be stored in  `sac-exp/SAC_$env$NoFrameskip-v4_seed0/SAC*.pth` and the training log will be recorded in `sac-exp/SAC_$env$NoFrameskip-v4_seed0/events.out.tfevents.*` .
 
 2. Use the trained SAC agent to collect trajectories.
 
    ```python
-   python dataset/sac_expert.py --env_id $env$NoFrameskip-v4 --mode test --buffer_size 100000 --test_checkpoints dataset/sac-exp/SAC_$env$NoFrameskip-v4_seed0/SAC*.pth
+   python sac_expert.py --env_id $env$NoFrameskip-v4 --mode test --buffer_size 100000 --test_checkpoints sac-exp/SAC_$env$NoFrameskip-v4_seed0/SAC*.pth
    ```
 
 Regardless of the methods, all collected trajectories will be stored in `dataset/$env$`. Each `*.pkl`  save continuous expert stacked states.
@@ -73,12 +73,12 @@ Similar commands for ELE:
 python pretrain.py --algo ELE --game Breakout --tdr_coff 0.5 
 ```
 
-> If you want to use your own observation dataset or have moved the generated dataset, just additionally set `--src_root`.
+> If you want to use your own observation dataset or have moved the generated dataset, just additionally set `--src_root`. Be cautious that previous record will be replaced if you run this command mutiple times.
 
 After pretraining, the pretrained model weights will be saved in `pretrain-exp/$env$_$model$/$model$_*.pth`. All statistical data of loss functions will be recorded in `pretrain-exp/$env$_$model$/$train*.csv`. We can plot the learning curve by running `vis_csv.py`:
 
 ```python
-python visualize/vis_csv.py --root ../pretrain-exp/$env$_$model$
+python visualize/vis_csv.py --root pretrain-exp/$env$_$model$
 ```
 
 If the curve of total loss nearly converges, it is time to finish pretraining.

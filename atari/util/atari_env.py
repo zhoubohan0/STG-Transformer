@@ -1,6 +1,9 @@
-import gym,cv2
-import numpy as np
 from collections import deque
+
+import cv2
+import gym
+import numpy as np
+
 
 class NoopResetEnv(gym.Wrapper):
     def __init__(self, env, noop_max=30):
@@ -127,10 +130,10 @@ class ProcessFrame84Env(gym.Wrapper):
             x_t = cv2.resize(img, (84, 110), interpolation=cv2.INTER_LINEAR)[18:102, :]
         else:
             x_t = cv2.resize(img, (84, 84), interpolation=cv2.INTER_LINEAR)
-        x_t = np.reshape(x_t, [84, 84])#, 1
+        x_t = np.reshape(x_t, [84, 84])  # , 1
         return x_t.astype(np.uint8)
 
-    def __init__(self, env=None,clipframe=True):
+    def __init__(self, env=None, clipframe=True):
         super(ProcessFrame84Env, self).__init__(env)
         self.clipframe = clipframe
         self.observation_space = gym.spaces.Box(low=0, high=255, shape=(84, 84, 1))
@@ -158,7 +161,8 @@ class FrameStackEnv(gym.Wrapper):
         self.k = k
         self.frames = deque([], maxlen=k)
         shp = env.observation_space.shape
-        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(shp[:-1] + (shp[-1] * k,)),dtype=env.observation_space.dtype)
+        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(shp[:-1] + (shp[-1] * k,)),
+                                                dtype=env.observation_space.dtype)
 
     def reset(self):
         ob = self.env.reset()
@@ -191,7 +195,7 @@ def make_env(env_id, seed, capture_video, run_name, clipframe):
     # assert 'NoFrameskip' in env.spec.id
     env = gym.make(env_id)
     env = gym.wrappers.RecordEpisodeStatistics(env)
-    if capture_video: env = gym.wrappers.Monitor(env, f"videos/{run_name}")#and idx == 0
+    if capture_video: env = gym.wrappers.Monitor(env, f"videos/{run_name}")  # and idx == 0
     env = EpisodicLifeEnv(env)
     env = NoopResetEnv(env, noop_max=30)
     env = MaxAndSkipEnv(env, skip=4)
@@ -204,4 +208,3 @@ def make_env(env_id, seed, capture_video, run_name, clipframe):
     env.action_space.seed(seed)
     env.observation_space.seed(seed)
     return env
-
