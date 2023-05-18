@@ -4,7 +4,49 @@ Plan4MC is a multi-task agent in Minecraft, solving long-term tasks via planning
 
 ## Overview
 
-The completed steps to run our STG model for Minecraft RL tasks are as follows.
+The completed tasks to run STG model for MineCraft tasks are as below.
+
+## Task id for each task
+
+Milk a cow: `harvest_milk_with_empty_bucket_and_cow`
+
+Gather wool: `harvest_wool_with_shears_and_sheep`
+
+Harvest tallgrass: `harvest_1_tallgrass`
+
+Pick a flower: `harvest_1_double_plant`
+
+Note that for 'Harvest tallgrass' task, you need to modify the source code of minedojo. 
+
+Open file  `minedojo/tasks/description_files/tasks_specs.yaml` and add following code:
+
+```python
+# ====== obtain tallgrass ====
+harvest_1_tallgrass:
+  __cls__: "harvest"
+  prompt: "obtain a tallgrass in the plains"
+  target_names: "tallgrass"
+  target_quantities: 1
+  reward_weights: 1
+  use_voxel: true
+  voxel_size: { xmin: -1, ymin: -1, zmin: -1, xmax: 1 ymax: 1, zmax: 1 }
+  use_lidar: false
+  initial_inventory:
+    mainhand:
+      name: "shears"
+```
+
+Open file `minedojo/tasks/description_files/programmatic_tasks.yaml` and add following code: 
+```python
+harvest_1_tallgrass:
+  category: harvest
+  guidance: 
+   '1. Find a tallgrass block.
+    1. Mine the tallgrass block.
+    2. Collect the dropped item.'
+  prompt: obtain tallgrass
+```
+
 
 ## Step 0: Set up the MineDojo environment
 
@@ -38,7 +80,7 @@ The completed steps to run our STG model for Minecraft RL tasks are as follows.
       
       Note that we add `MINEDOJO_HEADLESS=1` as a prefix to avoid Malmo error. This can happen when your system does not support visualization display. Otherwise, yuo can feel free to remove it.  
       
-  - Clone our STG-Transformer repo
+- Clone our STG-Transformer repo
   ```
   git clone https://github.com/zhoubohan0/STG-Transformer.git
   ```
@@ -57,21 +99,48 @@ The completed steps to run our STG model for Minecraft RL tasks are as follows.
 
 As we discussed in our paper, we utilized the learned policy in [Plan4MC](https://github.com/PKU-RL/Plan4MC) and [CLIP4MC](https://github.com/PKU-RL/CLIP4MC) to collect our expert datasets. Specifically, 
 
-### Task 'Milk a Cow' and Task 'Gather Wool'
+### Milk and Wool
 - Download the [pretrained MineCLIP model](https://disk.pku.edu.cn:443/link/86843F120DF784DCC117624D2E90A569) named `attn.pth`.  Move this to the directory `minecraft/mineagent/official`.
 
-- Run the following code in the directory `STG-Transformer/minecraft`: 
+- Enter into the the directory `STG-Transformer/minecraft`
+
+  ```
+  cd minecraft
+  ```
+
+- Run the following code to collect expert datasets for task 'milk a cow'. If you want to collect expert datasets for task 'gather wool', change the parameter `--task` to `harvest_wool_with_shears_and_sheep`
 
     ``` 
     python generate_expert_traj.py --task harvest_milk_with_empty_bucket_and_cow --test-episode 100
     ```
-  If you encounter Malmo error, add `MINEDOJO_HEADLESS=1` at the head of this command:
-  ``` 
-  MINEDOJO_HEADLESS=1 python generate_expert_traj.py --task harvest_milk_with_empty_bucket_and_cow --test-episode 100
-    ```
+  If you encounter Malmo error, add `MINEDOJO_HEADLESS=1` at the head of this command.
 
   You can see the collected expert datasets under the newly created directory `minecraft/expert_traj`. '1' indicates the trajectory collected is successful while '0' indicates the trajectory is unsuccessful; 
 
-### Task 'arvest Tallgrass' and Task 'Pick a Flower'
+ 
 
-For these two tasks, we trained a CLIP4MC policy from scratch and use the successful gifs saved during the training stages as our expert datasets. Please refer to [CLIP4MC](https://github.com/PKU-RL/CLIP4MC) for more details about how to train CLIP4MC policy.
+### Tallgrass and Flower
+
+For these two tasks, we trained a CLIP4MC policy from scratch and use the successful gifs saved during the training stage as our expert datasets. Please refer to [CLIP4MC](https://github.com/PKU-RL/CLIP4MC) for more details about how to train CLIP4MC policy.
+
+
+## Step2: Train STG model
+
+
+
+For each task, you should train a STG model using the expert datasets collected in Step 1. 
+
+Run the following code:
+```
+python STGTrain/STG4MC.py --stg_name milk --src_dir expert_traj/harvest_milk_with_empty_bucket_and_cow --n_epoch 100
+```
+
+The `--src_dir` parameter indicates the directory where your expert datasets are saved.
+
+After running this, you should see there is a newly created directory `stgmodel-exp`. A csv file `train.csv ` is saved to record the training loss. `*.pth` files are also saved to store the model weights.
+
+To check whether the STG model has converged, you can visualize it via following code:
+
+```
+python plot/stg_plot.py --file stgmodel-exp/milk/trainss.csv
+```

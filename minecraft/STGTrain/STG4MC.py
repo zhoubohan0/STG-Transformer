@@ -64,10 +64,12 @@ class Config:
     n_head = 4
     n_embd = 512
     max_timestep = 10000
+    
     # 训练超参数
     weight_decay = 0.1
     learning_rate = 1e-4
     betas = (0.9, 0.95)
+    
     '''损失系数'''
     l2_coff = 0.5
     g_coff = 0.05
@@ -75,8 +77,11 @@ class Config:
     tdr_coff = 0.1
 
     fe = 'MCCNN'  # ResCNN
-    n_epoch = 300
+
+    n_epoch = 100
     batch_size = 4
+    
+    
 
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
@@ -570,65 +575,37 @@ class SSTransformer(nn.Module):
         self.optimizer.step()
         return L2_loss.item(), G_loss.item(), D_loss.item(), tdr_loss.item(), loss.item()
 
-    def trainss(self, src_root_list, threshold):
+    def trainss(self, args):
         if not self.initialized:
-            for src_root in src_root_list:
-                gif2pkl(src_root, threshold)
+            gif2pkl(args.src_dir)
             self.initialized = True
 
         # 训练
-        save_dir = f'ssmodel-exp/{task}_TDR/'
+        save_dir = f'stgmodel-exp/{args.stg_name}/'
         exp_logger = Logger(save_dir, f'trainss.csv',
                             fieldnames=['update', 'Total_loss', 'L2_loss', 'G_loss', 'D_loss', 'TDR_loss'])
         self.train()  # 测试时model.eval()关闭dropout和batchnorm
         num = 0
         for i_epoch in range(self.config.n_epoch):
-            for each in glob(os.path.join(src_root,'*success1.pkl')):
-                pkl_name = os.path.splitext(os.path.basename(each))[0]
-                ret_value = int(pkl_name.split('_')[1][3:])
-                if threshold is None or ret_value > threshold:
-                    states = pickle.load(open(each,'rb'))
-                    for i in range(4):
-                        if states.shape[0]<=config.block_size:
-                            batch = torch.Tensor(states/ 255.).unsqueeze(0)
-                        else:
-                            b = states.shape[0] - self.config.block_size
-                            step = torch.randint(b, (min(config.batch_size,b), 1, 1),dtype=torch.long)  # (config.batch_size,1,1)
-                            batch = torch.Tensor(states[np.array([list(range(id, id + self.config.block_size + 1)) for id in step])]) / 255.0  # (config.batch_size, config.block_size+1, 4, 84, 84)
-                        L2_loss, G_loss, D_loss, tdr_loss, tot_loss = ssmodel.update(batch.to(device), None)
-                        exp_logger.update(fieldvalues=[num, tot_loss, L2_loss, G_loss, D_loss, tdr_loss])
-                        num += 1
-                        if num % 5000 == 0: torch.save(self.state_dict(), f'{save_dir}/{num}.pth')
-                        if num % 100 == 0: print(
-                            f'update:{num:05d} | loss:{tot_loss:.6f} | L2_loss:{L2_loss:.6f} | G_loss:{G_loss:.6f} | D_loss:{D_loss:.6f} | TDR_loss:{tdr_loss:.6f}')
+            print(f'Epoch {i_epoch}:')
+            for each in glob(os.path.join(args.src_dir,'*success1.pkl')):
+                states = pickle.load(open(each,'rb'))
+                for i in range(4):
+                    if states.shape[0]<=config.block_size:
+                        batch = torch.Tensor(states/ 255.).unsqueeze(0)
+                    else:
+                        b = states.shape[0] - self.config.block_size
+                        step = torch.randint(b, (min(config.batch_size,b), 1, 1),dtype=torch.long)  # (config.batch_size,1,1)
+                        batch = torch.Tensor(states[np.array([list(range(id, id + self.config.block_size + 1)) for id in step])]) / 255.0  # (config.batch_size, config.block_size+1, 4, 84, 84)
+                    L2_loss, G_loss, D_loss, tdr_loss, tot_loss = ssmodel.update(batch.to(device), None)
+                    exp_logger.update(fieldvalues=[num, tot_loss, L2_loss, G_loss, D_loss, tdr_loss])
+                    num += 1
+                    if num % 5000 == 0: torch.save(self.state_dict(), f'{save_dir}/{num}.pth')
+                    if num % 100 == 0: print(
+                        f'update:{num:05d} | loss:{tot_loss:.6f} | L2_loss:{L2_loss:.6f} | G_loss:{G_loss:.6f} | D_loss:{D_loss:.6f} | TDR_loss:{tdr_loss:.6f}')
         # 保存
         torch.save(self.state_dict(), f'{save_dir}/{num}.pth')
         print()
-
-    def test_TDR(self):
-        avg_dis = []
-        self.eval()
-        for i_data, d in enumerate(src, 1):
-            states = pickle.load(open(os.path.join('../expert\Breakout\clipped', d), 'rb'))['states']
-            step = torch.arange(0, states.shape[0] - self.config.block_size - 1, self.config.block_size).long().view(-1,1,1)  # (config.batch_size,1,1)
-            batch = torch.Tensor(states[np.array([list(range(id, id + self.config.block_size + 1)) for id in
-                                                  step])]) / 255.0  # (config.batch_size, config.block_size+1, 4, 84, 84)
-            step, batch = step.to(device), batch.to(device)
-            batch_size, block_size, c, w, h = batch.shape
-            embeddings = self.encoder(batch.view(-1, c, w, h)).view(batch_size, block_size,
-                                                                    self.config.n_embd)  # 先展平再reshape回
-            input_embedding = embeddings[:, :-1, :]
-            # time-distance
-            idx1 = np.arange(self.config.block_size)
-            idx2 = np.random.permutation(self.config.block_size)
-            idx1, idx2 = torch.LongTensor(idx1).to(device), torch.LongTensor(idx2).to(device)
-            time_dis = self.tdr.symlog(idx1, idx2).repeat(batch_size)
-            time_pred = self.tdr(input_embedding[:, idx1, :], input_embedding[:, idx2, :])
-            tdr_loss = F.mse_loss(time_pred, time_dis).item()
-            avg_dis.append(tdr_loss)
-            if i_data % 10 == 0:
-                print('Test: [{}/{}] | dis:{}'.format(i_data, len(src), tdr_loss))
-        print(f'Average distance:{np.mean(avg_dis)}')
 
     def cal_intrinsic_s2e(self, states_ls,device = torch.device('cuda')):
         '''
@@ -677,52 +654,51 @@ def setseed(seed):
     torch.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
 
-def gif2pkl(dataset_path, threshold=None):
+def gif2pkl(dataset_path):
     src = glob(os.path.join(dataset_path, '*success1.gif'))
     count = 0
 
     for i, gif_path in enumerate(src, 1):
         gif_name = os.path.splitext(os.path.basename(gif_path))[0]
-        ret_value = int(gif_name.split('_')[1][3:])
+        count += 1
+        frames = []
+        gif = cv2.VideoCapture(gif_path)
+        while True:
+            ret, frame = gif.read()
+            if not ret: break
+            frames.append(frame)
+        frames = np.array(frames, np.uint8).transpose(0, 3, 1, 2)
+        pkl_path = os.path.join(dataset_path, f'{gif_name}.pkl')
+        with open(pkl_path, 'wb') as f:
+            pickle.dump(frames, f)
 
-        if threshold is None or ret_value > threshold:
-            count += 1
-            frames = []
-            gif = cv2.VideoCapture(gif_path)
-            while True:
-                ret, frame = gif.read()
-                if not ret: break
-                frames.append(frame)
-            frames = np.array(frames, np.uint8).transpose(0, 3, 1, 2)
-            pkl_path = os.path.join(dataset_path, f'{gif_name}.pkl')
-            with open(pkl_path, 'wb') as f:
-                pickle.dump(frames, f)
-
-    if threshold is not None:
-        print(f'Total number of files with ret > {threshold}: {count}')
-    else:
-        print(f'Total number of files processed: {count}')
+    print(f'Total number of files processed: {count}')
 
 
 
 if __name__ == '__main__':
-    task = 'sunflower'
-    src_root = ["/home/ps/Plan4MC/checkpoint/Expert_ppo_double_plant_re-1.0_lbmda0.8_seed42",
-                ]
-    threshold = 100 # default: None (process all the success gif files without filtering the return value)
 
     parser = argparse.ArgumentParser()
+    parser.add_argument('--stg_name', type=str, required=True)
+    parser.add_argument('--src_dir', type=str, required=True)
     parser.add_argument('--seed', type=int, default=666)
     parser.add_argument('--block_size', type=int, default=200)
+    parser.add_argument('--batch_size', type=int, default=4)
+    parser.add_argument('--n_epoch', type=int, default=100)
+
+
+
     args = parser.parse_args()
     seed = args.seed
     setseed(seed)
-    config = Config(block_size=args.block_size)
+    config = Config(block_size=args.block_size, 
+                    batch_size=args.batch_size, 
+                    n_epoch=args.n_epoch,)
 
     # 模型
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     ssmodel = SSTransformer(config).to(device)
     
     # 训练以及测试
-    ssmodel.trainss(src_root, threshold)
+    ssmodel.trainss(args)
     # ssmodel.test_TDR()

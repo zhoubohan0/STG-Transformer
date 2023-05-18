@@ -522,8 +522,6 @@ def ppo_selfimitate_ss(args, ss_reward_model,seed=0, device=None,
     for epoch in range((n != 0) * (n + 1), n + epochs):
 
         # Save model and test
-
-        
         logger.log('start epoch {}'.format(epoch))
         o, ep_ret, ep_len = env.reset(), 0, 0  # Prepare for interaction with environment
         ep_ret_ss, ep_success, ep_ret_dense = 0, 0, 0
