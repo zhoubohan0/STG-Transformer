@@ -181,7 +181,7 @@ Intermediate results will be saved in the `checkpoint` and `data` directory.
 
 In case of unexpected suspension, you can resume your training by simply adding a parameter `--continue-n` in your command. For example, your experiments are interrupted at epoch 654, and in the `checkpoint` the latest model is saved at 650. Then you can re-start your training by the following code:
 
-Caution! Remember to backup the 
+Caution! Remember to backup the files saved in `data` directory, as it will be over-written.
 
 ```
 MINEDOJO_HEADLESS=1 python train.py --task harvest_milk_with_empty_bucket_and_cow --biome plains --ss_model_path YOUR_STG_MODEL_PATH --env_reward 0 --stg 1 --expseed 666 --horizon 500 --steps 2000 --intri_type ds --ss_coff -5 --algo stg --exp-name ppo --epochs 1000 --continue-n 650

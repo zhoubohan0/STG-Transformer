@@ -1,8 +1,11 @@
 import argparse
 #from spinup_utils.mpi_tools import mpi_fork
 import os
-from mineagent.common.run_utils import setup_logger_kwargs
+
 import torch
+import sys
+
+from mineagent.common.run_utils import setup_logger_kwargs
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -15,13 +18,12 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=1000) # epoch number
     parser.add_argument('--save-path', type=str, default='checkpoint') # model save path
     parser.add_argument('--exp-name', type=str, required=True) # log name
-    #parser.add_argument('--mode', type=str, default='DIRECT') # GUI if use real time render
     parser.add_argument('--task', type=str,required=True) # task_id
     parser.add_argument('--horizon', type=int, required=True) # task horizon. 500 in the current released code
 
     # CLIP model and agent model config
-    parser.add_argument('--clip-config-path', type=str, default='mineclip_official/config.yml')
-    parser.add_argument('--clip-model-path', type=str, default='mineclip_official/attn.pth')
+    parser.add_argument('--clip-config-path', type=str, default='mineagent/official/config.yml')
+    parser.add_argument('--clip-model-path', type=str, default='mineagent/official/attn.pth')
     parser.add_argument('--agent-model', type=str, default='mineagent') # agent architecture: mineagent, cnn
     parser.add_argument('--agent-config-path', type=str, default='mineagent/conf.yaml') # for mineagent
 
@@ -82,10 +84,10 @@ if __name__ == '__main__':
         device = torch.device('cuda:{}'.format(args.gpu))
     print('Using device:', device)
 
-    if args.algo in ['TDR','tdr']:
-        from SSmodelTDR4MC import *
+    if args.algo in ['STG','stg']:
+        from STGTrain.STG4MC import *
     if args.algo in ['ELE','ele']:
-        from SSmodelELE4MC import *
+        from STGTrain.ELE4MC import *
     # initialize the SS reward model
     if args.stg:
         ss_reward_model = SSTransformer(Config()).to(device)

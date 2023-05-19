@@ -1,13 +1,7 @@
 import minedojo
-import sys
-#import imageio
 import numpy as np
-import time
 
-# reset() bug fixed
-# use the multi-discrete action space (3,3,4,25,25,8). For the last dim, allow 0,1,3 only
-# further tune and clip the action space, modify transform_action(). 22/9/1
-
+from mineagent.official import torch_normalize
 from mineagent.batch import Batch
 import torch
 from mineagent.features.voxel.flattened_voxel_block import VOXEL_BLOCK_NAME_MAP
@@ -272,6 +266,14 @@ class MinecraftEnv:
         obs = self.base_env.reset()
         self.cur_step = 0
 
+        if self.clip_model is not None:
+            with torch.no_grad():
+                img = torch_normalize(np.asarray(obs['rgb'], dtype=np.int)).view(1,1,*self.observation_size)
+                img_emb = self.clip_model.image_encoder(torch.as_tensor(img,dtype=torch.float).to(self.device))
+                obs['rgb_emb'] = img_emb.cpu().numpy() # (1,1,512)
+                #print(obs['rgb_emb'])
+                obs['prev_action'] = self.prev_action
+
         if self.dense_reward:
             self._consecutive_distances.clear()
             self._weapon_durability_deque.clear()  # updated 11.29
@@ -285,6 +287,14 @@ class MinecraftEnv:
         self.cur_step += 1
         if self.cur_step >= self.max_step:
             done = True
+        
+        if self.clip_model is not None:
+            with torch.no_grad():
+                img = torch_normalize(np.asarray(obs['rgb'], dtype=np.int)).view(1,1,*self.observation_size)
+                img_emb = self.clip_model.image_encoder(torch.as_tensor(img,dtype=torch.float).to(self.device))
+                obs['rgb_emb'] = img_emb.cpu().numpy() # (1,1,512)
+                #print(obs['rgb_emb'])
+                obs['prev_action'] = self.prev_action
 
         self.prev_action = act # save the previous action for the agent's observation
 
@@ -322,24 +332,3 @@ class MinecraftEnv:
                     
 
         return  obs, reward, done, info
-
-
-
-# if __name__ == '__main__':
-#     #print(minedojo.ALL_TASKS_SPECS)
-#     env = MinecraftEnv(
-#         task_id="harvest_milk_with_empty_bucket_and_cow",
-#         image_size=(160, 256),
-#     )
-#     reset_cmds = ["/kill @e[type=!player]", "/clear", "/kill @e[type=item]"]
-#     obs = env.reset()
-#     #print(obs.shape, obs.dtype)
-#     for t in range (100):
-#         for i in range(12):
-#             act = [42,0] #cam
-#             obs, reward, done, info = env.step(act)
-#             time.sleep(0.2)
-#         print('reset')
-#         for cmd in reset_cmds:
-#             env.base_env.execute_cmd(cmd)
-#         obs = env.reset()

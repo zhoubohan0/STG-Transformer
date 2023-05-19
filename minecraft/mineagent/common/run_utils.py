@@ -1,8 +1,8 @@
-from user_config import DEFAULT_DATA_DIR, FORCE_DATESTAMP, \
+from .user_config import DEFAULT_DATA_DIR, FORCE_DATESTAMP, \
                                DEFAULT_SHORTHAND, WAIT_BEFORE_LAUNCH
-from logx import colorize
+from .logx import colorize
 #from spinup_utils.mpi_tools import mpi_fork, msg
-from serialization_utils import convert_json
+from .serialization_utils import convert_json
 import base64
 from copy import deepcopy
 import cloudpickle

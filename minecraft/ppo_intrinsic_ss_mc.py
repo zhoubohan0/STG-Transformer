@@ -5,14 +5,13 @@ import torch
 import numpy as np
 from mineagent.common.logx import EpochLogger
 import imageio
-from mineagent.official import torch_normalize
-from RLTrain.minecraft import MinecraftEnv, preprocess_obs, transform_action
+from mineagent.official import torch_normalize, build_pretrain_model
+from minecraft_env import MinecraftEnv, preprocess_obs, transform_action
 from mineagent.batch import Batch
 from mineagent import features, SimpleFeatureFusion, MineAgent, MultiCategoricalActor, Critic
 import copy
 import pickle
 from minedojo.sim import InventoryItem
-
 
 # PPO buffer, but the observation is stored with Batch
 class PPOBuffer:
@@ -203,7 +202,7 @@ def ppo_selfimitate_ss(args, ss_reward_model,seed=0, device=None,
                        steps_per_epoch=400, epochs=500, gamma=0.99, clip_ratio=0.2, pi_lr=1e-4, vf_lr=1e-4,
                        train_pi_iters=80, train_v_iters=80, lam=0.95, max_ep_len=1000,
                        target_kl=0.01, save_freq=5, logger_kwargs=dict(), save_path='checkpoint',
-                       agent_config_path='', n=0):
+                       clip_config_path='', clip_model_path='', agent_config_path='', n=0):
     """
     Proximal Policy Optimization (by clipping), 
 
@@ -308,6 +307,11 @@ def ppo_selfimitate_ss(args, ss_reward_model,seed=0, device=None,
             the current policy and value function.
 
     """
+    
+    def compute_all_CNN_embeddings(model, imgs, device):
+        video = imgs.to(device)  # (1, N, 3, 160, 256)
+        imgs_emb = model(torch.as_tensor(video, dtype=torch.float)).detach()
+        return imgs_emb
 
     # Special function to avoid certain slowdowns from PyTorch + MPI combo.
     # setup_pytorch_for_mpi()
@@ -322,18 +326,33 @@ def ppo_selfimitate_ss(args, ss_reward_model,seed=0, device=None,
     torch.manual_seed(args.expseed)
     np.random.seed(args.expseed)
 
+    # load pretrained mineclip model
+    clip_config = utils.get_yaml_data(clip_config_path)
+    model_clip = build_pretrain_model(
+        image_config=clip_config['image_config'],
+        text_config=clip_config['text_config'],
+        temporal_config=clip_config['temporal_config'],
+        adapter_config=clip_config['adaptor_config'],
+        state_dict=torch.load(clip_model_path)
+    ).to(device)
+    model_clip.eval()
+    print('MineCLIP model loaded.')
+
     # Instantiate environment
     env = MinecraftEnv(
         task_id=args.task,
         image_size=(160, 256),
         max_step=args.horizon,
+        clip_model=model_clip if (args.agent_model == 'mineagent') else None,
         device=device,
         seed=seed,
         dense_reward=bool(args.use_dense),
         dis=args.dis,
         biome=args.biome,
+        # target_name=args.target_name,
     )
     obs_dim = env.observation_size
+    env_act_dim = env.action_size
     agent_act_dim = len(args.actor_out_dim)
     print('Task prompt:', env.task_prompt)
     # logger.log('env: obs {}, act {}'.format(env.observation_space, env.action_space))
@@ -387,6 +406,15 @@ def ppo_selfimitate_ss(args, ss_reward_model,seed=0, device=None,
 
     # Sync params across processes
     # sync_params(ac)
+
+    # Count variables
+    var_counts = (  # utils.count_vars(actor), utils.count_vars(critic),
+        utils.count_vars(mine_agent), utils.count_vars(model_clip))
+    # logger.log('\nNumber of parameters: \t actor: %d, \t critic: %d, \t  agent: %d, \t mineclip: %d\n'%var_counts)
+    logger.log('\nNumber of parameters: \t agent: %d, \t mineclip: %d\n' % var_counts)
+    # var_counts = (utils.count_vars(actor), utils.count_vars(critic),
+    #     utils.count_vars(mine_agent), utils.count_vars(model_clip))
+    # logger.log('\nNumber of parameters: \t actor: %d, \t critic: %d, \t  agent: %d, \t mineclip: %d\n'%var_counts)
 
     # Set up experience buffer
     buf = PPOBuffer(agent_act_dim, steps_per_epoch, gamma, lam, args.agent_model, obs_dim)
@@ -522,8 +550,11 @@ def ppo_selfimitate_ss(args, ss_reward_model,seed=0, device=None,
     for epoch in range((n != 0) * (n + 1), n + epochs):
 
         # Save model and test
+
+        
         logger.log('start epoch {}'.format(epoch))
         o, ep_ret, ep_len = env.reset(), 0, 0  # Prepare for interaction with environment
+        # clip_reward_model.update_obs(o['rgb_emb']) # preprocess the images embedding
         ep_ret_ss, ep_success, ep_ret_dense = 0, 0, 0
         ep_rewards = []
         if args.agent_model == 'mineagent':
@@ -561,12 +592,23 @@ def ppo_selfimitate_ss(args, ss_reward_model,seed=0, device=None,
             next_o, r, d, _ = env.step(a_env)
             success = r
 
-            r = r * args.reward_success
+            # update the recent 16 frames, compute intrinsic reward
+            # clip_reward_model.update_obs(next_o['rgb_emb'])
+            # r_clip = clip_reward_model.reward(mode=args.clip_reward_mode)
+
+            r = r * args.reward_success  # + args.reward_step # + r_clip * args.reward_clip # weighted sum of different rewards
             ep_rewards.append(r)
             ep_obs = torch.cat((ep_obs, torch.Tensor(np.asarray(next_o['rgb'], dtype=np.uint8).copy()).view(1, 1,*env.observation_size)),1)
 
+            # dense reward
+            if args.use_dense:
+                r_dense = next_o['dense_reward']
+                r += r_dense * args.reward_dense
+                ep_ret_dense += r_dense
+
             ep_success += success
             if ep_success > 1: ep_success = 1
+            # ep_ret_clip += r_clip
             ep_ret += r
             ep_len += 1
 
@@ -576,7 +618,7 @@ def ppo_selfimitate_ss(args, ss_reward_model,seed=0, device=None,
             else:
                 batch_o = batch_o.cpu().numpy()
             buf.store(batch_o, a[0].cpu(), r, v,
-                      logp)  # the stored reward will be modified at episode end, if use SS reward
+                      logp)  # the stored reward will be modified at episode end, if use CLIP reward
             logger.store(VVals=v.detach().cpu().numpy())
 
             # Update obs (critical!)
@@ -586,10 +628,9 @@ def ppo_selfimitate_ss(args, ss_reward_model,seed=0, device=None,
             terminal = d or timeout
             epoch_ended = t == steps_per_epoch - 1
 
-            # compute SS rewards for each step.
-            # modify the trajectory rewards in the buffer
             if terminal or epoch_ended:
-                
+                # compute SS rewards for each step.
+                # modify the trajectory rewards in the buffer
                 if args.intri_type == 'pe':
                     ep_rewards_ss = ss_reward_model.cal_intrinsic_s2e(ep_obs/255.)[0]
                 if args.intri_type == 'ds':
@@ -648,6 +689,8 @@ def ppo_selfimitate_ss(args, ss_reward_model,seed=0, device=None,
                     logger.store(EpRet=ep_ret, EpLen=ep_len, EpRetSS=ep_ret_ss, EpSuccess=ep_success,
                                  EpRetDense=ep_ret_dense)
 
+                            
+
                 o, ep_ret, ep_len = env.reset(), 0, 0
                 env.base_env.clear_inventory()
 
@@ -659,6 +702,8 @@ def ppo_selfimitate_ss(args, ss_reward_model,seed=0, device=None,
                 ep_ret_ss, ep_success, ep_ret_dense = 0, 0, 0
                 ep_rewards = []
                 ep_obs = torch.Tensor(np.asarray(o['rgb'], dtype=np.int).copy()).view(1, 1, *env.observation_size)
+                # clip_reward_model.reset() # don't forget to reset the clip images buffer
+                # clip_reward_model.update_obs(o['rgb_emb']) # preprocess the images embedding
                 rgb_list = []
                 episode_in_epoch_cnt += 1
 

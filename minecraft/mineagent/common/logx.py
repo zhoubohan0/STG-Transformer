@@ -14,7 +14,7 @@ import torch
 import os.path as osp, time, atexit, os
 import warnings
 #from spinup_utils.mpi_tools import proc_id, mpi_statistics_scalar
-from serialization_utils import convert_json
+from .serialization_utils import convert_json
 
 def mpi_statistics_scalar(x, with_min_and_max=False):
     """
