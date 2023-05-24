@@ -6,71 +6,6 @@
 
 The completed tasks to run STG model for MineCraft tasks are as below.
 
-## Task id for each task
-
-Milk a cow: `harvest_milk_with_empty_bucket_and_cow`
-
-Gather wool: `harvest_wool_with_shears_and_sheep`
-
-Harvest tallgrass: `harvest_1_tallgrass`
-
-Pick a flower: `harvest_1_double_plant`
-
-
-Note that for `harvest_1_tallgrass` and `harvest_1_double_plant` task, you need to modify the source code of minedojo. 
-
-1. Open file  `MineDojo/minedojo/tasks/description_files/tasks_specs.yaml` and add following code:
-
-    ```python
-    # ====== obtain tallgrass ====
-    harvest_1_tallgrass:
-      __cls__: "harvest"
-      prompt: "obtain a tallgrass in the plains"
-      target_names: "tallgrass"
-      target_quantities: 1
-      reward_weights: 1
-      use_voxel: true
-      voxel_size: { xmin: -1, ymin: -1, zmin: -1, xmax: 1 ymax: 1, zmax: 1 }
-      use_lidar: false
-      initial_inventory:
-        mainhand:
-          name: "shears"
-
-    # ====== obtain flower (double plant) ====
-    harvest_1_double_plant:
-      __cls__: "harvest"
-      prompt: "obtain a sunflower in the plain"
-      target_names: "double_plant"
-      target_quantities: 1
-      reward_weights: 1
-      use_voxel: true
-      voxel_size: { xmin: -1, ymin: -1, zmin: -1, xmax: 1, ymax: 1, zmax: 1 }
-      use_lidar: false
-      initial_inventory:
-        mainhand:
-          name: "shears"
-
-    ```
-
-2. Open file `MineDojo/minedojo/tasks/description_files/programmatic_tasks.yaml` and add following code: 
-    ```python
-    harvest_1_tallgrass:
-      category: harvest
-      guidance: '1. Find a tallgrass block.
-        1. Mine the tallgrass block.
-        2. Collect the dropped item.'
-      prompt: obtain tallgrass
-
-    harvest_1_double_plant:
-      category: harvest
-      guidance: '1. Find a double plant block.
-        2. Mine the double plant block.
-        3. Collect the dropped item.'
-      prompt: obtain a sunflower
-    ```
-  
-3. Open file `MineDojo/minedojo/tasks/__init__.py` and find `natural_items`. Add `tallgrass` and `double_plant` into the list.
-
 
 ## Step 0: Set up the MineDojo environment
 
@@ -118,6 +53,70 @@ Note that for `harvest_1_tallgrass` and `harvest_1_double_plant` task, you need 
   pip install -r requirements.txt -i https://mirrors.huaweicloud.com/repository/pypi/simple
   ```
 
+### Task id for each task
+
+Milk a cow: `harvest_milk_with_empty_bucket_and_cow`
+
+Gather wool: `harvest_wool_with_shears_and_sheep`
+
+Harvest tallgrass: `harvest_1_tallgrass`
+
+Pick a flower: `harvest_1_double_plant`
+
+
+Note that for `harvest_1_tallgrass` and `harvest_1_double_plant` task, you need to modify the source code of minedojo. 
+
+1. Open file  `MineDojo/minedojo/tasks/description_files/tasks_specs.yaml` and add following code:
+
+    ```python
+    # ====== obtain tallgrass ====
+    harvest_1_tallgrass:
+      __cls__: "harvest"
+      prompt: "obtain a tallgrass in the plains"
+      target_names: "tallgrass"
+      target_quantities: 1
+      reward_weights: 1
+      use_voxel: true
+      voxel_size: { xmin: -1, ymin: -1, zmin: -1, xmax: 1, ymax: 1, zmax: 1 }
+      use_lidar: false
+      initial_inventory:
+        mainhand:
+          name: "shears"
+
+    # ====== obtain flower (double plant) ====
+    harvest_1_double_plant:
+      __cls__: "harvest"
+      prompt: "obtain a sunflower in the plain"
+      target_names: "double_plant"
+      target_quantities: 1
+      reward_weights: 1
+      use_voxel: true
+      voxel_size: { xmin: -1, ymin: -1, zmin: -1, xmax: 1, ymax: 1, zmax: 1 }
+      use_lidar: false
+      initial_inventory:
+        mainhand:
+          name: "shears"
+
+    ```
+
+2. Open file `MineDojo/minedojo/tasks/description_files/programmatic_tasks.yaml` and add following code: 
+    ```python
+    harvest_1_tallgrass:
+      category: harvest
+      guidance: '1. Find a tallgrass block.
+        1. Mine the tallgrass block.
+        2. Collect the dropped item.'
+      prompt: obtain tallgrass
+
+    harvest_1_double_plant:
+      category: harvest
+      guidance: '1. Find a double plant block.
+        2. Mine the double plant block.
+        3. Collect the dropped item.'
+      prompt: obtain a sunflower
+    ```
+  
+3. Open file `MineDojo/minedojo/tasks/__init__.py` and find `natural_items`. Add `tallgrass` and `double_plant` into the list.
 
 ## Step 1: Collect expert trajectories
 
