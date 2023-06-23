@@ -20,8 +20,13 @@ pip clone https://github.com/zhoubohan0/STG-Transformer
 Our paper is available on [Arxiv](). If you find our code useful or want to conduct further research based on STG, please consider citing us!
 
 ```bibtex
-@article{
+@misc{zhou2023learning,
+      title={Learning from Visual Observation via Offline Pretrained State-to-Go Transformer}, 
+      author={Bohan Zhou and Ke Li and Jiechuan Jiang and Zongqing Lu},
       year={2023},
+      eprint={2306.12860},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG}
 }
 ```
 
