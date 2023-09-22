@@ -1,8 +1,8 @@
-# State-To-Go (STG) Transformer
+# [NeurIPS 2023] Learning from Visual Observation via Offline Pretrained State-to-Go Transformer
 
 ![](./src/main-workflow.jpg)
 
-This is the official implementation of "Learning from Visual Observation via Offline Pretrained State-to-Go Transformer". A two-stage method, named **STG**, is proposed for reinforcement learning from visual observation.  
+This is the official implementation of "Learning from Visual Observation via Offline Pretrained State-to-Go Transformer" which has been accepted by NeurIPS 2023. A two-stage method, named **STG**, is proposed for reinforcement learning from visual observation.  
 
 - In the first stage, State-to-Go (STG) Transformer is pretrained offline to predict and differentiate latent transitions of demonstrations. 
 - In the second stage, the STG Transformer provides intrinsic rewards for downstream reinforcement learning tasks.
