@@ -17,7 +17,7 @@ pip clone https://github.com/zhoubohan0/STG-Transformer
 
 ## Citation
 
-Our paper is available on [arxiv](https://arxiv.org/abs/2306.12860). If you find our code useful or want to conduct further research based on STG, please consider citing us!
+Our paper is available on [arxiv](https://arxiv.org/abs/2306.12860) and you can access our [website](https://sites.google.com/view/stgtransformer) for more infomation. If you find our code useful or want to conduct further research based on STG, please consider citing us!
 
 ```bibtex
 @article{zhou2023learning,
